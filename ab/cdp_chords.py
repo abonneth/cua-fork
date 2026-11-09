@@ -5,6 +5,7 @@ import ctypes.wintypes as wt
 import json
 import os
 import subprocess
+import threading
 import time
 import urllib.request
 
@@ -74,9 +75,7 @@ def fresh_page() -> Page:
 
 
 def front_away_from_edge() -> str:
-    hwnd = user32.FindWindowW("Notepad", None)
-    if not hwnd:
-        return foreground()
+    hwnd = HOST
     user32.keybd_event(0x1B, 0, 0, 0)
     user32.keybd_event(0x1B, 0, 2, 0)
     time.sleep(0.3)
@@ -93,9 +92,28 @@ def front_away_from_edge() -> str:
     return foreground()
 
 
-subprocess.Popen(["notepad.exe"])
-time.sleep(3)
-print("notepad hwnd:", user32.FindWindowW("Notepad", None), "foreground after reset:", front_away_from_edge())
+def host_window() -> int:
+    ready = threading.Event()
+    box = {}
+
+    def pump() -> None:
+        user32.CreateWindowExW.restype = wt.HWND
+        user32.CreateWindowExW.argtypes = [wt.DWORD, wt.LPCWSTR, wt.LPCWSTR, wt.DWORD, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, wt.HWND, wt.HMENU, wt.HINSTANCE, wt.LPVOID]
+        box["hwnd"] = user32.CreateWindowExW(0, "Edit", "host app", 0x10CF0000, 100, 100, 600, 400, None, None, None, None)
+        ready.set()
+        msg = wt.MSG()
+        while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
+            user32.TranslateMessage(ctypes.byref(msg))
+            user32.DispatchMessageW(ctypes.byref(msg))
+
+    threading.Thread(target=pump, daemon=True).start()
+    ready.wait()
+    return box["hwnd"]
+
+
+HOST = host_window()
+time.sleep(1)
+print("host hwnd:", HOST, "foreground after reset:", front_away_from_edge())
 print("foreground before the chords:", foreground())
 lines = ["| chord sent to the page over CDP | page saw keydown | browser effect | foreground before -> after |", "|---|---|---|---|"]
 for name, chord in CHORDS.items():
