@@ -26,4 +26,7 @@ jobs:
           }
       - name: Chords over CDP
         working-directory: ab
-        run: python cdp_chords.py
+        shell: pwsh
+        run: |
+          $env:EDGE = "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe"
+          python cdp_chords.py

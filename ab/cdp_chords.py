@@ -106,6 +106,58 @@ time.sleep(0.5)
 selected = page.value("(e=>e.selectionEnd-e.selectionStart)(document.getElementById('f'))")
 lines.append(f"| control: ctrl+a in a text field | {page.value('window.keys||[]')} | selected {selected} of 5 chars |")
 print(lines[-1])
+
+
+def front_away_from_edge() -> str:
+    hwnd = user32.FindWindowW("Notepad", None)
+    if hwnd:
+        user32.keybd_event(0x12, 0, 0, 0)
+        user32.SetForegroundWindow(hwnd)
+        user32.keybd_event(0x12, 0, 2, 0)
+        time.sleep(0.5)
+    return foreground()
+
+
+def browser_call(method: str, params: dict) -> dict:
+    ws = websocket.create_connection(json.load(urllib.request.urlopen(f"{BASE}/json/version"))["webSocketDebuggerUrl"], timeout=10)
+    ws.send(json.dumps({"id": 1, "method": method, "params": params}))
+    reply = json.loads(ws.recv())
+    ws.close()
+    return reply
+
+
+def ctrl_t() -> None:
+    page = fresh_page()
+    front_away_from_edge()
+    page.chord("t", "KeyT", 84, 2)
+    page.ws.close()
+
+
+OPENERS = {
+    "ctrl+t over CDP Input.dispatchKeyEvent": ctrl_t,
+    "Target.createTarget background=true": lambda: browser_call("Target.createTarget", {"url": "about:blank", "background": True}),
+    "Target.createTarget background=false": lambda: browser_call("Target.createTarget", {"url": "about:blank", "background": False}),
+    "control: relaunch msedge.exe with a URL": lambda: subprocess.Popen([os.environ["EDGE"], f"--user-data-dir={os.environ['RUNNER_TEMP']}\\edge", "about:blank"]),
+}
+REPS = 5
+lines += ["", "| opening a tab, foreground on another app | tab opened | Edge took the foreground | foreground before |", "|---|---|---|---|"]
+for name, opener in OPENERS.items():
+    opened = fronted = 0
+    befores = set()
+    for _ in range(REPS):
+        if name.startswith("ctrl+t"):
+            tabs_before = len(pages()) + 1
+        else:
+            tabs_before = len(pages())
+        before = front_away_from_edge()
+        befores.add(before)
+        opener()
+        time.sleep(2)
+        opened += len(pages()) > tabs_before
+        fronted += foreground() == "msedge.exe"
+    lines.append(f"| {name} | {opened}/{REPS} | {fronted}/{REPS} | {', '.join(sorted(befores))} |")
+    print(lines[-1])
+
 summary = "\n".join(lines)
 with open(os.environ.get("GITHUB_STEP_SUMMARY", os.devnull), "a", encoding="utf-8") as out:
     out.write(summary + "\n")
