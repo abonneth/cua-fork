@@ -48,7 +48,8 @@ class Page:
 
 
 def fresh_page() -> Page:
-    page = Page(pages()[0])
+    request = urllib.request.Request(f"{BASE}/json/new?about:blank", method="PUT")
+    page = Page(json.load(urllib.request.urlopen(request)))
     page.call("Page.navigate", {"url": "data:text/html,<input id=f value=hello><script>window.loadedAt=performance.timeOrigin;document.addEventListener('keydown',e=>{(window.keys=window.keys||[]).push((e.ctrlKey?'ctrl+':'')+e.key)})</script>"})
     time.sleep(1.5)
     page.value("document.getElementById('f').focus()")
@@ -59,13 +60,16 @@ lines = ["| chord sent to the page over CDP | page saw keydown | browser effect 
 for name, chord in CHORDS.items():
     page = fresh_page()
     tabs_before, loaded_before = len(pages()), page.value("window.loadedAt")
-    page.chord(*chord)
+    try:
+        page.chord(*chord)
+    except websocket.WebSocketConnectionClosedException:
+        pass
     time.sleep(2)
     tabs_after = len(pages())
     try:
         seen, loaded_after = page.value("window.keys||[]"), page.value("window.loadedAt")
-    except Exception as error:
-        seen, loaded_after = f"page gone: {error}", None
+    except Exception:
+        seen, loaded_after = "(tab closed)", loaded_before
     effect = []
     if tabs_after != tabs_before:
         effect.append(f"tabs {tabs_before} -> {tabs_after}")
