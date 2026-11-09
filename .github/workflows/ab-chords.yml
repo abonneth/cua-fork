@@ -28,5 +28,6 @@ jobs:
         working-directory: ab
         shell: pwsh
         run: |
+          Get-Process WWAHost -ErrorAction SilentlyContinue | Stop-Process -Force
           $env:EDGE = "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe"
           python cdp_chords.py
