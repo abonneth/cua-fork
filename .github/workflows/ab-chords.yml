@@ -1,0 +1,27 @@
+name: ab-chords
+
+on:
+  push:
+    branches: [ab/chords]
+  workflow_dispatch:
+
+jobs:
+  chords:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Start Edge
+        shell: pwsh
+        run: |
+          pip install -q websocket-client
+          $edge = "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe"
+          Start-Process $edge -ArgumentList '--remote-debugging-port=9222', "--user-data-dir=$env:RUNNER_TEMP\edge", '--no-first-run', '--no-default-browser-check', 'about:blank'
+          Start-Sleep -Seconds 10
+          & $edge --version
+      - name: Chords over CDP
+        working-directory: ab
+        run: python cdp_chords.py
