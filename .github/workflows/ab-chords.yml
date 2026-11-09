@@ -7,25 +7,23 @@ on:
 
 jobs:
   chords:
-    runs-on: windows-latest
+    runs-on: windows-11-arm
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Start Chrome
+      - name: Start Edge
         shell: pwsh
         run: |
           pip install -q websocket-client
-          $edge = "$env:ProgramFiles\Google\Chrome\Application\chrome.exe"
+          $edge = "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe"
           (Get-Item $edge).VersionInfo.ProductVersion
           Start-Process $edge -ArgumentList '--remote-debugging-port=9222', "--user-data-dir=$env:RUNNER_TEMP\edge", '--no-first-run', '--no-default-browser-check', 'about:blank'
-          $file = "$env:RUNNER_TEMP\edge\DevToolsActivePort"
-          foreach ($i in 1..90) { if (Test-Path $file) { break }; Start-Sleep -Seconds 1 }
-          Get-Content $file
-          "CDP_PORT=$((Get-Content $file)[0])" >> $env:GITHUB_ENV
-          Start-Sleep -Seconds 5
+          foreach ($i in 1..90) {
+            try { Invoke-RestMethod http://127.0.0.1:9222/json/version | ConvertTo-Json -Compress; break } catch { Start-Sleep -Seconds 1 }
+          }
       - name: Chords over CDP
         working-directory: ab
         run: python cdp_chords.py
