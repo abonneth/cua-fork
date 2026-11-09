@@ -14,11 +14,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Start Edge
+      - name: Start Chrome
         shell: pwsh
         run: |
           pip install -q websocket-client
-          $edge = "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe"
+          $edge = "$env:ProgramFiles\Google\Chrome\Application\chrome.exe"
+          (Get-Item $edge).VersionInfo.ProductVersion
           Start-Process $edge -ArgumentList '--remote-debugging-port=9222', "--user-data-dir=$env:RUNNER_TEMP\edge", '--no-first-run', '--no-default-browser-check', 'about:blank'
           $file = "$env:RUNNER_TEMP\edge\DevToolsActivePort"
           foreach ($i in 1..90) { if (Test-Path $file) { break }; Start-Sleep -Seconds 1 }
