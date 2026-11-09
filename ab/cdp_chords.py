@@ -1,7 +1,10 @@
 """Do browser shortcuts sent to a page over CDP `Input.dispatchKeyEvent` reach the browser frame (tabs, reload)?"""
 
+import ctypes
+import ctypes.wintypes as wt
 import json
 import os
+import subprocess
 import time
 import urllib.request
 
@@ -15,6 +18,20 @@ CHORDS = {
     "f5 (reload)": ("F5", "F5", 116, 0),
     "ctrl+r (reload)": ("r", "KeyR", 82, 2),
 }
+
+
+user32, kernel32 = ctypes.WinDLL("user32"), ctypes.WinDLL("kernel32")
+kernel32.OpenProcess.restype = wt.HANDLE
+
+
+def foreground() -> str:
+    pid = wt.DWORD()
+    user32.GetWindowThreadProcessId(user32.GetForegroundWindow(), ctypes.byref(pid))
+    handle = kernel32.OpenProcess(0x1000, False, pid.value)
+    buf, size = ctypes.create_unicode_buffer(512), wt.DWORD(512)
+    kernel32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size))
+    kernel32.CloseHandle(handle)
+    return buf.value.rsplit("\\", 1)[-1] or "?"
 
 
 def pages() -> list[dict]:
@@ -56,16 +73,20 @@ def fresh_page() -> Page:
     return page
 
 
-lines = ["| chord sent to the page over CDP | page saw keydown | browser effect |", "|---|---|---|"]
+subprocess.Popen(["notepad.exe"])
+time.sleep(3)
+print("foreground before the chords:", foreground())
+lines = ["| chord sent to the page over CDP | page saw keydown | browser effect | foreground before -> after |", "|---|---|---|---|"]
 for name, chord in CHORDS.items():
     page = fresh_page()
     tabs_before, loaded_before = len(pages()), page.value("window.loadedAt")
+    front_before = foreground()
     try:
         page.chord(*chord)
     except websocket.WebSocketConnectionClosedException:
         pass
     time.sleep(2)
-    tabs_after = len(pages())
+    tabs_after, front_after = len(pages()), foreground()
     try:
         seen, loaded_after = page.value("window.keys||[]"), page.value("window.loadedAt")
     except Exception:
@@ -75,7 +96,7 @@ for name, chord in CHORDS.items():
         effect.append(f"tabs {tabs_before} -> {tabs_after}")
     if loaded_after != loaded_before:
         effect.append("reloaded")
-    lines.append(f"| {name} | {seen} | {', '.join(effect) or 'none'} |")
+    lines.append(f"| {name} | {seen} | {', '.join(effect) or 'none'} | {front_before} -> {front_after} |")
     print(lines[-1])
     page.ws.close()
 
