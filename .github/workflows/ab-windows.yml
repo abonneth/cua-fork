@@ -1,0 +1,53 @@
+name: ab-windows
+
+on:
+  push:
+    branches: [ab/windows]
+  workflow_dispatch:
+
+env:
+  A_REF: 311d525ab705dcebdc82dceefa175c32d2da1e18
+  B_REF: 7e7732bf0ca481dd48b6911d02e3c8ac9ef959fc
+  EXPERIMENT: console_windows
+  CARGO_NET_RETRY: "10"
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  ab:
+    runs-on: windows-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build A and B
+        shell: pwsh
+        run: |
+          $src = "$env:RUNNER_TEMP\src"
+          git clone --quiet --filter=blob:none --no-checkout https://github.com/trycua/cua $src
+          git -C $src fetch --quiet https://github.com/abonneth/cua-fork $env:B_REF
+          foreach ($v in 'A', 'B') {
+            $ref = (Get-Item "env:$($v)_REF").Value
+            git -C $src checkout --quiet --force $ref
+            Push-Location "$src\libs\cua-driver\rust"
+            cargo build --locked --release -p cua-driver -p cua-driver-uia
+            if ($LASTEXITCODE) { throw "build $v failed" }
+            Pop-Location
+            $bin = "$env:RUNNER_TEMP\bin\$v"
+            New-Item -ItemType Directory -Force $bin | Out-Null
+            Copy-Item "$src\libs\cua-driver\rust\target\release\cua-driver.exe", "$src\libs\cua-driver\rust\target\release\cua-driver-uia.exe" $bin
+            & "$bin\cua-driver.exe" --version
+            (Get-FileHash "$bin\cua-driver.exe").Hash
+          }
+      - name: Start Edge
+        shell: pwsh
+        run: |
+          $edge = "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe"
+          Start-Process $edge -ArgumentList '--remote-debugging-port=9222', "--user-data-dir=$env:RUNNER_TEMP\edge", '--no-first-run', '--no-default-browser-check', 'about:blank'
+          Start-Sleep -Seconds 10
+      - name: A/B
+        shell: pwsh
+        working-directory: ab
+        run: python "$env:EXPERIMENT.py" "$env:RUNNER_TEMP\bin\A" "$env:RUNNER_TEMP\bin\B"
