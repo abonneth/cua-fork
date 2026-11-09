@@ -73,8 +73,29 @@ def fresh_page() -> Page:
     return page
 
 
+def front_away_from_edge() -> str:
+    hwnd = user32.FindWindowW("Notepad", None)
+    if not hwnd:
+        return foreground()
+    user32.keybd_event(0x1B, 0, 0, 0)
+    user32.keybd_event(0x1B, 0, 2, 0)
+    time.sleep(0.3)
+    fg_thread = user32.GetWindowThreadProcessId(user32.GetForegroundWindow(), None)
+    me = kernel32.GetCurrentThreadId()
+    user32.AttachThreadInput(me, fg_thread, True)
+    user32.keybd_event(0x12, 0, 0, 0)
+    user32.ShowWindow(hwnd, 9)
+    user32.BringWindowToTop(hwnd)
+    user32.SetForegroundWindow(hwnd)
+    user32.keybd_event(0x12, 0, 2, 0)
+    user32.AttachThreadInput(me, fg_thread, False)
+    time.sleep(0.5)
+    return foreground()
+
+
 subprocess.Popen(["notepad.exe"])
 time.sleep(3)
+print("notepad hwnd:", user32.FindWindowW("Notepad", None), "foreground after reset:", front_away_from_edge())
 print("foreground before the chords:", foreground())
 lines = ["| chord sent to the page over CDP | page saw keydown | browser effect | foreground before -> after |", "|---|---|---|---|"]
 for name, chord in CHORDS.items():
@@ -106,16 +127,6 @@ time.sleep(0.5)
 selected = page.value("(e=>e.selectionEnd-e.selectionStart)(document.getElementById('f'))")
 lines.append(f"| control: ctrl+a in a text field | {page.value('window.keys||[]')} | selected {selected} of 5 chars |")
 print(lines[-1])
-
-
-def front_away_from_edge() -> str:
-    hwnd = user32.FindWindowW("Notepad", None)
-    if hwnd:
-        user32.keybd_event(0x12, 0, 0, 0)
-        user32.SetForegroundWindow(hwnd)
-        user32.keybd_event(0x12, 0, 2, 0)
-        time.sleep(0.5)
-    return foreground()
 
 
 def browser_call(method: str, params: dict) -> dict:
