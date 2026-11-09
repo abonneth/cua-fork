@@ -7,7 +7,7 @@ import urllib.request
 
 import websocket
 
-BASE = "http://127.0.0.1:9222"
+BASE = f"http://127.0.0.1:{os.environ.get('CDP_PORT', '9222')}"
 CHORDS = {
     "ctrl+t (new tab)": ("t", "KeyT", 84, 2),
     "ctrl+w (close tab)": ("w", "KeyW", 87, 2),
