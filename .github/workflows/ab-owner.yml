@@ -1,0 +1,57 @@
+name: ab-owner
+
+on:
+  push:
+    branches: [ab/owner]
+  workflow_dispatch:
+
+env:
+  A_REF: 311d525ab705dcebdc82dceefa175c32d2da1e18
+  B_REF: 5f5a3392deb6694a6909bb1b555caf153d158560
+  CARGO_NET_RETRY: "10"
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  ab:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq clang pkg-config libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev \
+            libei-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev libxext-dev libwayland-dev libudev-dev xvfb
+      - name: Build A and B
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/src"
+          git clone --quiet --filter=blob:none --no-checkout https://github.com/trycua/cua "$src"
+          git -C "$src" fetch --quiet https://github.com/abonneth/cua-fork "$B_REF"
+          exe=cua-driver; [[ "$RUNNER_OS" == Windows ]] && exe=cua-driver.exe
+          for v in A B; do
+            ref_var="${v}_REF"; git -C "$src" checkout --quiet --force "${!ref_var}"
+            (cd "$src/libs/cua-driver/rust" && cargo build --locked --release -p cua-driver)
+            mkdir -p "$RUNNER_TEMP/bin/$v"
+            cp "$src/libs/cua-driver/rust/target/release/$exe" "$RUNNER_TEMP/bin/$v/"
+            "$RUNNER_TEMP/bin/$v/$exe" --version
+          done
+      - name: A/B
+        shell: bash
+        working-directory: ab
+        run: |
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            xvfb-run -a python owner_pid.py "$RUNNER_TEMP/bin/A" "$RUNNER_TEMP/bin/B"
+          else
+            python owner_pid.py "$RUNNER_TEMP/bin/A" "$RUNNER_TEMP/bin/B"
+          fi
