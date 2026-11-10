@@ -6,9 +6,10 @@ on:
   workflow_dispatch:
 
 env:
-  A_REF: 802cf587eb
+  A_REF: 5098eecb09223e53d49c31d58d228a5493a10c9d
   B_REF: 261445bb9728df4d4513458671acf42dbed2a2b0
   C_REF: b28dfa0dead74e8ab8959bc685e369f1da90fa96
+  D_REF: 9096d39b04ef67cc44da0e1c208eaa1f82e0fdbb
   CARGO_NET_RETRY: "10"
   CARGO_INCREMENTAL: "0"
 
@@ -19,8 +20,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        variant: [driver-enables-remote-debugging, remote-debugging-already-on]
-        build: [A, C]
+        variant: [driver-enables-remote-debugging]
+        build: [A, D]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5
@@ -33,10 +34,10 @@ jobs:
           set -euo pipefail
           src="$RUNNER_TEMP/src"
           git clone --quiet --filter=blob:none --no-checkout https://github.com/trycua/cua "$src"
-          git -C "$src" fetch --quiet https://github.com/abonneth/cua-fork "$B_REF" "$C_REF"
+          git -C "$src" fetch --quiet https://github.com/abonneth/cua-fork "$B_REF" "$C_REF" "$D_REF"
           ref_var="${{ matrix.build }}_REF"; git -C "$src" checkout --quiet --force "${!ref_var}"
           cd "$src/libs/cua-driver/rust"
-          if [[ "${{ matrix.build }}" == C && "${{ matrix.variant }}" == remote-debugging-already-on ]]; then
+          if [[ "${{ matrix.build }}" == D ]]; then
             cargo test --locked -p platform-windows --lib browser_
           fi
           cargo build --locked --release -p cua-driver
