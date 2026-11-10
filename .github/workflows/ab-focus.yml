@@ -8,6 +8,7 @@ on:
 env:
   A_REF: 802cf587eb
   B_REF: 261445bb9728df4d4513458671acf42dbed2a2b0
+  C_REF: b28dfa0dead74e8ab8959bc685e369f1da90fa96
   CARGO_NET_RETRY: "10"
   CARGO_INCREMENTAL: "0"
 
@@ -19,7 +20,7 @@ jobs:
       fail-fast: false
       matrix:
         variant: [driver-enables-remote-debugging, remote-debugging-already-on]
-        build: [A, B]
+        build: [A, C]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5
@@ -32,11 +33,11 @@ jobs:
           set -euo pipefail
           src="$RUNNER_TEMP/src"
           git clone --quiet --filter=blob:none --no-checkout https://github.com/trycua/cua "$src"
-          git -C "$src" fetch --quiet https://github.com/abonneth/cua-fork "$B_REF"
+          git -C "$src" fetch --quiet https://github.com/abonneth/cua-fork "$B_REF" "$C_REF"
           ref_var="${{ matrix.build }}_REF"; git -C "$src" checkout --quiet --force "${!ref_var}"
           cd "$src/libs/cua-driver/rust"
-          if [[ "${{ matrix.build }}" == B && "${{ matrix.variant }}" == remote-debugging-already-on ]]; then
-            cargo test --locked -p platform-windows --lib browser_consent_ui
+          if [[ "${{ matrix.build }}" == C && "${{ matrix.variant }}" == remote-debugging-already-on ]]; then
+            cargo test --locked -p platform-windows --lib browser_
           fi
           cargo build --locked --release -p cua-driver
           ./target/release/cua-driver.exe --version
