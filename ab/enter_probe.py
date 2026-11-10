@@ -61,11 +61,27 @@ def front_host() -> bool:
     return user32.GetForegroundWindow() == HOST
 
 
+def owner(hwnd: int | None) -> str:
+    pid = wt.DWORD()
+    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    cls = ctypes.create_unicode_buffer(128)
+    user32.GetClassNameW(hwnd, cls, 128)
+    return f"{pid.value}:{cls.value}"
+
+
+def pattern(control: auto.Control, name: str):
+    try:
+        return control.GetPattern(getattr(auto.PatternId, f"{name}Pattern"))
+    except Exception:
+        return None
+
+
 class Foreground:
     """Total ms the foreground spent away from the host while it ran, polled every 2 ms."""
 
     def __init__(self) -> None:
         self.away_ms = 0.0
+        self.who: set[str] = set()
         self.running = True
         self.thread = threading.Thread(target=self.poll, daemon=True)
         self.thread.start()
@@ -74,8 +90,10 @@ class Foreground:
         last = time.monotonic()
         while self.running:
             now = time.monotonic()
-            if user32.GetForegroundWindow() != HOST:
+            fg = user32.GetForegroundWindow()
+            if fg != HOST:
                 self.away_ms += (now - last) * 1000
+                self.who.add(owner(fg))
             last = now
             time.sleep(0.002)
 
@@ -83,7 +101,14 @@ class Foreground:
         time.sleep(1.0)
         self.running = False
         self.thread.join()
+        if self.away_ms:
+            print(f"    away {round(self.away_ms)} ms: {sorted(self.who)} (host {HOST}, edge pids {edge_pids()})")
         return round(self.away_ms)
+
+
+def edge_pids() -> list[int]:
+    out = subprocess.run(["tasklist", "/fi", "imagename eq msedge.exe", "/fo", "csv", "/nh"], capture_output=True, text=True).stdout
+    return sorted({int(line.split('","')[1]) for line in out.splitlines() if line.count('","') >= 1})[:3]
 
 
 def edge() -> auto.Control:
@@ -154,7 +179,7 @@ def dump_popup() -> None:
             continue
         for c, depth in auto.WalkControl(w, maxDepth=12):
             if c.ControlTypeName in ("ListControl", "ListItemControl"):
-                pats = [p for p in ("Invoke", "SelectionItem", "LegacyIAccessible") if getattr(c, f"Get{p}Pattern")() is not None]
+                pats = [p for p in ("Invoke", "SelectionItem", "LegacyIAccessible") if pattern(c, p) is not None]
                 print(f"  popup {w.Name[:30]!r} depth={depth} {c.ControlTypeName} {c.Name[:80]!r} patterns={pats}")
 
 
@@ -163,10 +188,10 @@ def suggestion_invoke(win: auto.Control, omni: auto.Control) -> None:
     if not rows:
         raise RuntimeError("no omnibox suggestion row names the setup URL")
     row = rows[0]
-    if (p := row.GetInvokePattern()) is not None:
+    if (p := pattern(row, "Invoke")) is not None:
         p.Invoke()
     else:
-        row.GetLegacyIAccessiblePattern().DoDefaultAction()
+        pattern(row, "LegacyIAccessible").DoDefaultAction()
 
 
 def suggestion_select(win: auto.Control, omni: auto.Control) -> None:
@@ -201,7 +226,7 @@ def main() -> None:
         for _ in range(REPS):
             win = edge()
             before = len(tabs(win))
-            front_host()
+            print(f"  {name}: host fronted={front_host()}")
             watch = Foreground()
             try:
                 win.ButtonControl(Name="New Tab").GetInvokePattern().Invoke()
@@ -212,9 +237,9 @@ def main() -> None:
                 omni.GetValuePattern().SetValue(URL)
                 time.sleep(0.8)
                 if not dumped:
+                    dumped = True
                     print("---- omnibox popup after SetValue ----")
                     dump_popup()
-                    dumped = True
                 if method:
                     method(win, omni)
                 deadline = time.monotonic() + 3
