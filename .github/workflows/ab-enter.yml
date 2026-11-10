@@ -1,0 +1,26 @@
+name: ab-enter
+
+on:
+  push:
+    branches: [ab/enter]
+  workflow_dispatch:
+
+jobs:
+  enter:
+    runs-on: windows-11-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Probe
+        working-directory: ab
+        shell: pwsh
+        run: |
+          $edge = "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe"
+          (Get-Item $edge).VersionInfo.ProductVersion
+          $env:EDGE = $edge
+          Get-Process WWAHost, SearchHost, StartMenuExperienceHost -ErrorAction SilentlyContinue | Stop-Process -Force; Start-Sleep 2
+          pip install -q uiautomation
+          python enter_probe.py
