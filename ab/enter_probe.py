@@ -69,6 +69,17 @@ def wait(cond, seconds: float = 4.0) -> bool:
     return bool(cond())
 
 
+def popup_rows() -> list[auto.Control]:
+    rows = []
+    for w in auto.GetRootControl().GetChildren():
+        if w.ClassName != "Chrome_WidgetWin_1":
+            continue
+        for c, _ in auto.WalkControl(w, maxDepth=12):
+            if c.ControlTypeName == "ListItemControl" and (c.Name or "") == URL:
+                rows.append(c)
+    return rows
+
+
 def post(hwnd: int, msg: int, wparam: int, lparam: int = 0) -> None:
     user32.PostMessageW(hwnd, msg, wparam, lparam)
 
@@ -134,6 +145,15 @@ class Worker:
         if step == "uia close tab":
             pattern(selected_tab(win).ButtonControl(Name="Close tab"), "Invoke").Invoke()
             return wait(lambda: len(tabs(win)) == self.before)
+        if step == "msaa SetValue url":
+            pattern(omnibox(win), "LegacyIAccessible").SetValue(URL)
+            return wait(lambda: pattern(omnibox(win), "Value").Value == URL, 2)
+        if step == "msaa suggestion row":
+            rows = wait(lambda: bool(popup_rows()), 2) and popup_rows()
+            if not rows:
+                return False
+            pattern(rows[0], "LegacyIAccessible").DoDefaultAction()
+            return wait(lambda: on_setup_page(win))
         if step == "msaa new tab":
             pattern(win.ButtonControl(Name="New Tab"), "LegacyIAccessible").DoDefaultAction()
             return wait(lambda: len(tabs(win)) == self.before + 1)
@@ -232,6 +252,9 @@ ROUTES = {
     "UIA": ["uia new tab", "uia SetValue url", "PostMessage Enter", "uia Toggle on", "uia Toggle off", "uia close tab"],
     "window messages": ["WM_COMMAND new tab", "WM_CHAR type url", "PostMessage Enter", "uia Toggle on", "uia Toggle off", "WM_COMMAND close tab"],
     "msaa toggle": ["WM_COMMAND new tab", "WM_CHAR type url", "PostMessage Enter", "msaa toggle on", "msaa toggle off", "WM_COMMAND close tab"],
+    "msaa SetValue + posted Enter": ["msaa new tab", "msaa SetValue url", "PostMessage Enter", "msaa toggle on", "msaa toggle off", "msaa close tab"],
+    "msaa SetValue + msaa suggestion": ["msaa new tab", "msaa SetValue url", "msaa suggestion row", "msaa toggle on", "msaa toggle off", "msaa close tab"],
+    "WM_CHAR + msaa suggestion": ["msaa new tab", "WM_CHAR type url", "msaa suggestion row", "msaa toggle on", "msaa toggle off", "msaa close tab"],
     "msaa everywhere": ["msaa new tab", "WM_CHAR type url", "PostMessage Enter", "msaa toggle on", "msaa toggle off", "msaa close tab"],
     "posted click toggle": ["WM_COMMAND new tab", "WM_CHAR type url", "PostMessage Enter", "posted click toggle on", "posted click toggle off", "WM_COMMAND close tab"],
 }

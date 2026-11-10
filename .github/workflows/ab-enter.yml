@@ -12,7 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        route: ["msaa everywhere"]
+        route: ["msaa SetValue + posted Enter", "msaa SetValue + msaa suggestion", "WM_CHAR + msaa suggestion"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
