@@ -23,4 +23,9 @@ jobs:
           $env:EDGE = $edge
           Get-Process WWAHost, SearchHost, StartMenuExperienceHost -ErrorAction SilentlyContinue | Stop-Process -Force; Start-Sleep 2
           pip install -q uiautomation
+          Start-Process $edge -ArgumentList '--no-first-run', '--no-default-browser-check', 'https://example.com'
+          Start-Sleep 8
+          $worker = Start-Process python -ArgumentList 'enter_probe.py', 'worker' -PassThru -NoNewWindow
+          Start-Sleep 4
           python enter_probe.py
+          $worker.WaitForExit(10000)

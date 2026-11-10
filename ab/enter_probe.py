@@ -1,4 +1,4 @@
-"""Can Edge's omnibox navigate to an internal page, and its tab close, without taking the foreground, per method."""
+"""Which Edge setup-page steps take the foreground when a background process drives them, per input route."""
 
 import ctypes
 import ctypes.wintypes as wt
@@ -7,6 +7,7 @@ import subprocess
 import sys
 import threading
 import time
+from multiprocessing.connection import Client, Listener
 
 import uiautomation as auto
 
@@ -14,14 +15,124 @@ sys.stdout.reconfigure(encoding="utf-8")
 user32 = ctypes.WinDLL("user32")
 kernel32 = ctypes.WinDLL("kernel32")
 user32.PostMessageW.argtypes = [wt.HWND, wt.UINT, wt.WPARAM, wt.LPARAM]
-user32.SendMessageW.argtypes = [wt.HWND, wt.UINT, wt.WPARAM, wt.LPARAM]
-user32.SendMessageW.restype = wt.LPARAM
 user32.GetForegroundWindow.restype = wt.HWND
 
+ADDRESS = ("127.0.0.1", 47613)
 URL = "edge://inspect/#remote-debugging"
 REPS = 3
-WM_KEYDOWN, WM_KEYUP, WM_CHAR, VK_RETURN = 0x100, 0x101, 0x102, 0x0D
-ENTER_DOWN, ENTER_UP = 0x001C0001, 0xC01C0001
+WM_KEYDOWN, WM_KEYUP, WM_CHAR, WM_COMMAND, VK_RETURN = 0x100, 0x101, 0x102, 0x111, 0x0D
+IDC_NEW_TAB, IDC_CLOSE_TAB = 34014, 34015
+
+
+def pattern(control: auto.Control, name: str):
+    try:
+        return control.GetPattern(getattr(auto.PatternId, f"{name}Pattern"))
+    except Exception:
+        return None
+
+
+def edge() -> auto.Control:
+    wins = [w for w in auto.GetRootControl().GetChildren() if w.ClassName == "Chrome_WidgetWin_1" and "Edge" in w.Name]
+    return max(wins, key=lambda w: w.BoundingRectangle.width() * w.BoundingRectangle.height())
+
+
+def tabs(win: auto.Control) -> list[auto.Control]:
+    return [c for c, _ in auto.WalkControl(win, maxDepth=12) if c.ControlTypeName == "TabItemControl"]
+
+
+def selected_tab(win: auto.Control) -> auto.Control:
+    return next(t for t in tabs(win) if pattern(t, "SelectionItem").IsSelected)
+
+
+def omnibox(win: auto.Control) -> auto.Control:
+    return win.EditControl(Name="Address and search bar")
+
+
+def on_setup_page(win: auto.Control) -> bool:
+    for c, _ in auto.WalkControl(win, maxDepth=14):
+        if c.ControlTypeName == "DocumentControl" and (p := pattern(c, "Value")) is not None and p.Value.startswith("edge://inspect"):
+            return True
+    return False
+
+
+def checkbox(win: auto.Control) -> auto.Control | None:
+    for c, _ in auto.WalkControl(win, maxDepth=16):
+        if c.ControlTypeName == "CheckBoxControl" and pattern(c, "Toggle") is not None:
+            return c
+    return None
+
+
+def wait(cond, seconds: float = 4.0) -> bool:
+    deadline = time.monotonic() + seconds
+    while not cond() and time.monotonic() < deadline:
+        time.sleep(0.1)
+    return bool(cond())
+
+
+def post(hwnd: int, msg: int, wparam: int, lparam: int = 0) -> None:
+    user32.PostMessageW(hwnd, msg, wparam, lparam)
+
+
+def post_enter(hwnd: int) -> None:
+    post(hwnd, WM_KEYDOWN, VK_RETURN, 0x001C0001)
+    post(hwnd, WM_CHAR, 0x0D, 0x001C0001)
+    post(hwnd, WM_KEYUP, VK_RETURN, 0xC01C0001)
+
+
+class Worker:
+    """Runs one setup step per request; lives in a process that never owns the foreground."""
+
+    def __init__(self) -> None:
+        self.win = edge()
+        self.before = len(tabs(self.win))
+
+    def run(self, step: str) -> bool:
+        win, hwnd = self.win, self.win.NativeWindowHandle
+        if step == "reset":
+            self.win = edge()
+            self.before = len(tabs(self.win))
+            return True
+        if step == "uia new tab":
+            pattern(win.ButtonControl(Name="New Tab"), "Invoke").Invoke()
+            return wait(lambda: len(tabs(win)) == self.before + 1)
+        if step == "WM_COMMAND new tab":
+            post(hwnd, WM_COMMAND, IDC_NEW_TAB)
+            return wait(lambda: len(tabs(win)) == self.before + 1)
+        if step == "uia SetValue url":
+            pattern(omnibox(win), "Value").SetValue(URL)
+            return wait(lambda: pattern(omnibox(win), "Value").Value == URL, 2)
+        if step == "WM_CHAR type url":
+            for ch in URL:
+                post(hwnd, WM_CHAR, ord(ch), 1)
+            return wait(lambda: pattern(omnibox(win), "Value").Value == URL, 2)
+        if step == "PostMessage Enter":
+            post_enter(hwnd)
+            return wait(lambda: on_setup_page(win))
+        if step in ("uia Toggle on", "uia Toggle off"):
+            if not wait(lambda: checkbox(win) is not None, 6):
+                return False
+            box = checkbox(win)
+            pattern(box, "Toggle").Toggle()
+            want = 1 if step.endswith("on") else 0
+            return wait(lambda: pattern(checkbox(win), "Toggle").ToggleState == want, 2)
+        if step == "uia close tab":
+            pattern(selected_tab(win).ButtonControl(Name="Close tab"), "Invoke").Invoke()
+            return wait(lambda: len(tabs(win)) == self.before)
+        if step == "WM_COMMAND close tab":
+            post(hwnd, WM_COMMAND, IDC_CLOSE_TAB)
+            return wait(lambda: len(tabs(win)) == self.before)
+        raise ValueError(step)
+
+
+def worker() -> None:
+    auto.SetGlobalSearchTimeout(3)
+    state = Worker()
+    with Listener(ADDRESS) as listener, listener.accept() as conn:
+        while (step := conn.recv()) != "quit":
+            try:
+                conn.send((state.run(step), ""))
+            except Exception as error:
+                conn.send((False, f"{type(error).__name__}: {error}"))
 
 
 def host_window() -> int:
@@ -42,47 +153,29 @@ def host_window() -> int:
     return box["hwnd"]
 
 
-HOST = host_window()
-
-
-def front_host() -> bool:
-    user32.keybd_event(0x1B, 0, 0, 0)
-    user32.keybd_event(0x1B, 0, 2, 0)
-    time.sleep(0.2)
+def front(hwnd: int) -> bool:
     fg_thread = user32.GetWindowThreadProcessId(user32.GetForegroundWindow(), None)
     me = kernel32.GetCurrentThreadId()
     user32.AttachThreadInput(me, fg_thread, True)
     user32.keybd_event(0x12, 0, 0, 0)
-    user32.BringWindowToTop(HOST)
-    user32.SetForegroundWindow(HOST)
+    user32.BringWindowToTop(hwnd)
+    user32.SetForegroundWindow(hwnd)
     user32.keybd_event(0x12, 0, 2, 0)
     user32.AttachThreadInput(me, fg_thread, False)
-    time.sleep(0.5)
-    return user32.GetForegroundWindow() == HOST
+    time.sleep(0.4)
+    return user32.GetForegroundWindow() == hwnd
 
 
-def owner(hwnd: int | None) -> str:
-    pid = wt.DWORD()
-    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
-    cls = ctypes.create_unicode_buffer(128)
-    user32.GetClassNameW(hwnd, cls, 128)
-    return f"{pid.value}:{cls.value}"
+def edge_pids() -> set[int]:
+    out = subprocess.run(["tasklist", "/fi", "imagename eq msedge.exe", "/fo", "csv", "/nh"], capture_output=True, text=True).stdout
+    return {int(line.split('","')[1]) for line in out.splitlines() if line.count('","') >= 1}
 
 
-def pattern(control: auto.Control, name: str):
-    try:
-        return control.GetPattern(getattr(auto.PatternId, f"{name}Pattern"))
-    except Exception:
-        return None
+class EdgeForeground:
+    """Ms an Edge window held the foreground while it ran, polled every 2 ms."""
 
-
-class Foreground:
-    """Total ms the foreground spent away from the host while it ran, polled every 2 ms."""
-
-    def __init__(self) -> None:
-        self.away_ms = 0.0
-        self.who: set[str] = set()
-        self.running = True
+    def __init__(self, pids: set[int]) -> None:
+        self.pids, self.ms, self.running = pids, 0.0, True
         self.thread = threading.Thread(target=self.poll, daemon=True)
         self.thread.start()
 
@@ -90,10 +183,10 @@ class Foreground:
         last = time.monotonic()
         while self.running:
             now = time.monotonic()
-            fg = user32.GetForegroundWindow()
-            if fg != HOST:
-                self.away_ms += (now - last) * 1000
-                self.who.add(owner(fg))
+            pid = wt.DWORD()
+            user32.GetWindowThreadProcessId(user32.GetForegroundWindow(), ctypes.byref(pid))
+            if pid.value in self.pids:
+                self.ms += (now - last) * 1000
             last = now
             time.sleep(0.002)
 
@@ -101,184 +194,43 @@ class Foreground:
         time.sleep(1.0)
         self.running = False
         self.thread.join()
-        if self.away_ms:
-            print(f"    away {round(self.away_ms)} ms: {sorted(self.who)} (host {HOST}, edge pids {edge_pids()})")
-        return round(self.away_ms)
+        return round(self.ms)
 
 
-def edge_pids() -> list[int]:
-    out = subprocess.run(["tasklist", "/fi", "imagename eq msedge.exe", "/fo", "csv", "/nh"], capture_output=True, text=True).stdout
-    return sorted({int(line.split('","')[1]) for line in out.splitlines() if line.count('","') >= 1})[:3]
+ROUTES = {
+    "UIA": ["uia new tab", "uia SetValue url", "PostMessage Enter", "uia Toggle on", "uia Toggle off", "uia close tab"],
+    "window messages": ["WM_COMMAND new tab", "WM_CHAR type url", "PostMessage Enter", "uia Toggle on", "uia Toggle off", "WM_COMMAND close tab"],
+}
 
 
-def edge() -> auto.Control:
-    wins = [w for w in auto.GetRootControl().GetChildren() if w.ClassName == "Chrome_WidgetWin_1" and "Edge" in w.Name]
-    return max(wins, key=lambda w: w.BoundingRectangle.width() * w.BoundingRectangle.height())
-
-
-def tabs(win: auto.Control) -> list[auto.Control]:
-    return [c for c, _ in auto.WalkControl(win, maxDepth=12) if c.ControlTypeName == "TabItemControl"]
-
-
-def selected_tab(win: auto.Control) -> auto.Control:
-    return next(t for t in tabs(win) if t.GetSelectionItemPattern().IsSelected)
-
-
-def omnibox(win: auto.Control) -> auto.Control:
-    return win.EditControl(Name="Address and search bar")
-
-
-def on_setup_page(win: auto.Control) -> bool:
-    for c, _ in auto.WalkControl(win, maxDepth=14):
-        if c.ControlTypeName == "DocumentControl":
-            try:
-                if c.GetValuePattern().Value.startswith("edge://inspect"):
-                    return True
-            except Exception:
-                pass
-    return False
-
-
-def post_enter(win: auto.Control, omni: auto.Control) -> None:
-    hwnd = win.NativeWindowHandle
-    user32.PostMessageW(hwnd, WM_KEYDOWN, VK_RETURN, ENTER_DOWN)
-    user32.PostMessageW(hwnd, WM_CHAR, 0x0D, ENTER_DOWN)
-    user32.PostMessageW(hwnd, WM_KEYUP, VK_RETURN, ENTER_UP)
-
-
-def send_enter(win: auto.Control, omni: auto.Control) -> None:
-    hwnd = win.NativeWindowHandle
-    user32.SendMessageW(hwnd, WM_KEYDOWN, VK_RETURN, ENTER_DOWN)
-    user32.SendMessageW(hwnd, WM_CHAR, 0x0D, ENTER_DOWN)
-    user32.SendMessageW(hwnd, WM_KEYUP, VK_RETURN, ENTER_UP)
-
-
-def uia_focus_then_post_enter(win: auto.Control, omni: auto.Control) -> None:
-    omni.SetFocus()
-    post_enter(win, omni)
-
-
-def omnibox_default_action(win: auto.Control, omni: auto.Control) -> None:
-    omni.GetLegacyIAccessiblePattern().DoDefaultAction()
-
-
-def popup_rows() -> list[auto.Control]:
-    rows = []
-    for w in auto.GetRootControl().GetChildren():
-        if w.ClassName != "Chrome_WidgetWin_1":
-            continue
-        for c, _ in auto.WalkControl(w, maxDepth=12):
-            if c.ControlTypeName == "ListItemControl" and URL.split("#")[0].rstrip("/") in (c.Name or ""):
-                rows.append(c)
-    return rows
-
-
-def dump_popup() -> None:
-    for w in auto.GetRootControl().GetChildren():
-        if w.ClassName != "Chrome_WidgetWin_1":
-            continue
-        for c, depth in auto.WalkControl(w, maxDepth=12):
-            if c.ControlTypeName in ("ListControl", "ListItemControl"):
-                pats = [p for p in ("Invoke", "SelectionItem", "LegacyIAccessible") if pattern(c, p) is not None]
-                print(f"  popup {w.Name[:30]!r} depth={depth} {c.ControlTypeName} {c.Name[:80]!r} patterns={pats}")
-
-
-def suggestion_invoke(win: auto.Control, omni: auto.Control) -> None:
-    rows = popup_rows()
-    if not rows:
-        raise RuntimeError("no omnibox suggestion row names the setup URL")
-    row = rows[0]
-    if (p := pattern(row, "Invoke")) is not None:
-        p.Invoke()
-    else:
-        pattern(row, "LegacyIAccessible").DoDefaultAction()
-
-
-def suggestion_select(win: auto.Control, omni: auto.Control) -> None:
-    rows = popup_rows()
-    if not rows:
-        raise RuntimeError("no omnibox suggestion row names the setup URL")
-    rows[0].GetSelectionItemPattern().Select()
-    post_enter(win, omni)
-
-
-def checkbox(win: auto.Control) -> auto.Control | None:
-    for c, _ in auto.WalkControl(win, maxDepth=16):
-        if c.ControlTypeName == "CheckBoxControl" and pattern(c, "Toggle") is not None:
-            return c
-    return None
-
-
-def wait(cond, seconds: float = 3.0) -> bool:
-    deadline = time.monotonic() + seconds
-    while not cond() and time.monotonic() < deadline:
-        time.sleep(0.1)
-    return cond()
-
-
-def step(results: dict, name: str, action) -> bool:
-    front_host()
-    watch = Foreground()
-    try:
-        ok = bool(action())
-    except Exception as error:
-        print(f"  {name}: {type(error).__name__}: {error}")
-        ok = False
-    away = watch.stop()
-    done, stole = results.setdefault(name, [0, 0])
-    results[name] = [done + ok, stole + (away > 0)]
-    return ok
-
-
-def main() -> None:
-    edge_exe = os.environ["EDGE"]
-    subprocess.Popen([edge_exe, "--no-first-run", "--no-default-browser-check", "https://example.com"])
-    time.sleep(8)
-    auto.SetGlobalSearchTimeout(3)
-    results: dict = {}
-    for rep in range(REPS):
-        win = edge()
-        before = len(tabs(win))
-        print(f"rep {rep + 1}")
-
-        def new_tab() -> bool:
-            pattern(win.ButtonControl(Name="New Tab"), "Invoke").Invoke()
-            return wait(lambda: len(tabs(win)) == before + 1)
-
-        def set_url() -> bool:
-            pattern(omnibox(win), "Value").SetValue(URL)
-            return True
-
-        def enter() -> bool:
-            post_enter(win, None)
-            return wait(lambda: on_setup_page(win))
-
-        def toggle_on() -> bool:
-            box = wait(lambda: checkbox(win) is not None, 5) and checkbox(win)
-            pattern(box, "Toggle").Toggle()
-            return pattern(box, "Toggle").ToggleState == 1
-
-        def toggle_off() -> bool:
-            box = checkbox(win)
-            pattern(box, "Toggle").Toggle()
-            return pattern(box, "Toggle").ToggleState == 0
-
-        def close_invoke() -> bool:
-            pattern(selected_tab(win).ButtonControl(Name="Close tab"), "Invoke").Invoke()
-            return wait(lambda: len(tabs(win)) == before)
-
-        step(results, "1 new tab: UIA Invoke New Tab button", new_tab)
-        step(results, "2 omnibox: UIA SetValue", set_url)
-        step(results, "3 navigate: PostMessage Enter", enter)
-        step(results, "4 checkbox on: UIA Toggle", toggle_on)
-        step(results, "5 checkbox off: UIA Toggle", toggle_off)
-        step(results, "6 close tab: UIA Invoke Close tab button", close_invoke)
-    lines = ["| step | worked | took the foreground |", "|---|---|---|"]
-    lines += [f"| {name} | {done}/{REPS} | {stole}/{REPS} |" for name, (done, stole) in results.items()]
+def probe() -> None:
+    host = host_window()
+    pids = edge_pids()
+    conn = Client(ADDRESS)
+    results: dict[tuple[str, str], list[int]] = {}
+    for route, steps in ROUTES.items():
+        for rep in range(1, REPS + 1):
+            conn.send("reset")
+            conn.recv()
+            print(f"{route} rep {rep}")
+            for step in steps:
+                fronted = front(host)
+                watch = EdgeForeground(pids)
+                conn.send(step)
+                ok, error = conn.recv()
+                ms = watch.stop()
+                print(f"  {step}: ok={ok} host_fronted={fronted} edge_foreground_ms={ms} {error}")
+                done, stole = results.setdefault((route, step), [0, 0])
+                results[(route, step)] = [done + ok, stole + (ms > 0)]
+                if not ok and step.endswith("new tab"):
+                    break
+    conn.send("quit")
+    lines = ["| route | step | worked | Edge took the foreground |", "|---|---|---|---|"]
+    lines += [f"| {route} | {step} | {d}/{REPS} | {s}/{REPS} |" for (route, step), (d, s) in results.items()]
     summary = "\n".join(lines)
     print(summary)
     with open(os.environ.get("GITHUB_STEP_SUMMARY", os.devnull), "a", encoding="utf-8") as out:
         out.write(summary + "\n")
 
 
-main()
+worker() if sys.argv[1:] == ["worker"] else probe()
