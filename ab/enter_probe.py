@@ -115,6 +115,22 @@ class Worker:
             pattern(box, "Toggle").Toggle()
             want = 1 if step.endswith("on") else 0
             return wait(lambda: pattern(checkbox(win), "Toggle").ToggleState == want, 2)
+        if step.startswith(("msaa toggle", "posted click toggle")):
+            if not wait(lambda: checkbox(win) is not None, 6):
+                return False
+            box = checkbox(win)
+            want = 1 if step.endswith("on") else 0
+            if step.startswith("msaa"):
+                pattern(box, "LegacyIAccessible").DoDefaultAction()
+            else:
+                r = box.BoundingRectangle
+                point = wt.POINT((r.left + r.right) // 2, (r.top + r.bottom) // 2)
+                user32.ScreenToClient(hwnd, ctypes.byref(point))
+                lparam = (point.y << 16) | (point.x & 0xFFFF)
+                post(hwnd, 0x0200, 0, lparam)
+                post(hwnd, 0x0201, 1, lparam)
+                post(hwnd, 0x0202, 0, lparam)
+            return wait(lambda: pattern(checkbox(win), "Toggle").ToggleState == want, 2)
         if step == "uia close tab":
             pattern(selected_tab(win).ButtonControl(Name="Close tab"), "Invoke").Invoke()
             return wait(lambda: len(tabs(win)) == self.before)
@@ -209,6 +225,8 @@ class EdgeForeground:
 ROUTES = {
     "UIA": ["uia new tab", "uia SetValue url", "PostMessage Enter", "uia Toggle on", "uia Toggle off", "uia close tab"],
     "window messages": ["WM_COMMAND new tab", "WM_CHAR type url", "PostMessage Enter", "uia Toggle on", "uia Toggle off", "WM_COMMAND close tab"],
+    "msaa toggle": ["WM_COMMAND new tab", "WM_CHAR type url", "PostMessage Enter", "msaa toggle on", "msaa toggle off", "WM_COMMAND close tab"],
+    "posted click toggle": ["WM_COMMAND new tab", "WM_CHAR type url", "PostMessage Enter", "posted click toggle on", "posted click toggle off", "WM_COMMAND close tab"],
 }
 
 
