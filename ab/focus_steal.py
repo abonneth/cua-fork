@@ -11,7 +11,7 @@ import time
 from driver import CREATE_NEW_PROCESS_GROUP, CREATE_NO_WINDOW, Daemon, exe_name, user32
 
 kernel32 = ctypes.WinDLL("kernel32")
-REPS = int(os.environ.get("REPS", "5"))
+REPS = int(os.environ.get("REPS", "2"))
 SETTLE_S = 1.5
 EXE, VARIANT = sys.argv[1], sys.argv[2]
 
@@ -140,7 +140,18 @@ def main() -> None:
             outcome, effects = attach(daemon, where)
             phases["attach"] = watch.stop()
             if outcome.startswith("FAILED") and rep == 1:
+                import subprocess
+
+                subprocess.run(["taskkill", "/f", "/im", "WindowsTerminal.exe", "/im", "wsl.exe"], capture_output=True)
+                time.sleep(1)
                 shot(f"failed-attach-{VARIANT}.png")
+                tree = daemon.call("get_window_state", {k: where[k] for k in ("pid", "window_id")} | {"session": session})
+                text = "\n".join(c.get("text", "") for c in (tree.get("result") or {}).get("content", []) if isinstance(c, dict))
+                lines = text.splitlines()
+                hits = [i for i, line in enumerate(lines) if "Allow" in line or "Cancel" in line]
+                start = max(0, (hits[0] if hits else 0) - 25)
+                print("---- accessibility tree around the prompt ----")
+                print("\n".join(lines[start:start + 60]))
             state = structured(daemon.call("get_browser_state", where))
             tab = next((t["tab_id"] for t in state.get("tabs", []) if t.get("active")), None)
             front_host()

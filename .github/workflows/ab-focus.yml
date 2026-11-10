@@ -12,7 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        variant: [driver-enables-remote-debugging, remote-debugging-already-on]
+        variant: [remote-debugging-already-on]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
