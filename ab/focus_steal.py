@@ -13,7 +13,7 @@ sys.stdout.reconfigure(encoding="utf-8")
 from driver import CREATE_NEW_PROCESS_GROUP, CREATE_NO_WINDOW, Daemon, exe_name, user32
 
 kernel32 = ctypes.WinDLL("kernel32")
-REPS = int(os.environ.get("REPS", "2"))
+REPS = int(os.environ.get("REPS", "5"))
 SETTLE_S = 1.5
 EXE, VARIANT = sys.argv[1], sys.argv[2]
 

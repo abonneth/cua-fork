@@ -5,28 +5,42 @@ on:
     branches: [ab/focus]
   workflow_dispatch:
 
+env:
+  A_REF: 802cf587eb
+  B_REF: 261445bb9728df4d4513458671acf42dbed2a2b0
+  CARGO_NET_RETRY: "10"
+  CARGO_INCREMENTAL: "0"
+
 jobs:
   focus:
     runs-on: windows-11-arm
-    timeout-minutes: 30
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
-        variant: [remote-debugging-already-on]
+        variant: [driver-enables-remote-debugging, remote-debugging-already-on]
+        build: [A, B]
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: cua-driver release
-        shell: pwsh
+      - name: Build ${{ matrix.build }}
+        shell: bash
         run: |
-          $zip = "$env:RUNNER_TEMP\driver.zip"
-          Invoke-WebRequest "https://github.com/trycua/cua/releases/download/cua-driver-rs-v0.46.1/cua-driver-rs-0.46.1-windows-arm64-binary.zip" -OutFile $zip
-          Expand-Archive $zip "$env:RUNNER_TEMP\driver"
-          $exe = (Get-ChildItem "$env:RUNNER_TEMP\driver" -Recurse -Filter cua-driver.exe | Select-Object -First 1).FullName
-          & $exe --version
-          "DRIVER=$exe" >> $env:GITHUB_ENV
+          set -euo pipefail
+          src="$RUNNER_TEMP/src"
+          git clone --quiet --filter=blob:none --no-checkout https://github.com/trycua/cua "$src"
+          git -C "$src" fetch --quiet https://github.com/abonneth/cua-fork "$B_REF"
+          ref_var="${{ matrix.build }}_REF"; git -C "$src" checkout --quiet --force "${!ref_var}"
+          cd "$src/libs/cua-driver/rust"
+          if [[ "${{ matrix.build }}" == B && "${{ matrix.variant }}" == remote-debugging-already-on ]]; then
+            cargo test --locked -p platform-windows --lib browser_consent_ui
+          fi
+          cargo build --locked --release -p cua-driver
+          ./target/release/cua-driver.exe --version
+          echo "DRIVER=$(cygpath -w "$PWD/target/release/cua-driver.exe")" >> "$GITHUB_ENV"
       - name: Edge default profile
         shell: pwsh
         run: |
@@ -56,10 +70,10 @@ jobs:
           $port = "$env:LOCALAPPDATA\Microsoft\Edge\User Data\DevToolsActivePort"
           "DevToolsActivePort before the probe: $(Test-Path $port)"
           pip install -q pillow
-          python focus_steal.py $env:DRIVER ${{ matrix.variant }}
+          python focus_steal.py $env:DRIVER "${{ matrix.variant }}-${{ matrix.build }}"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: shots-${{ matrix.variant }}
+          name: shots-${{ matrix.variant }}-${{ matrix.build }}
           path: ab/shots
           if-no-files-found: ignore
