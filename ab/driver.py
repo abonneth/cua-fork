@@ -81,10 +81,10 @@ def consoles(windows: list[str]) -> list[str]:
 class Daemon:
     """`cua-driver serve` with no console of its own, as a GUI host (an Electron app, a service) starts it."""
 
-    def __init__(self, exe: str, pipe: str) -> None:
+    def __init__(self, exe: str, pipe: str, extra: tuple[str, ...] = ()) -> None:
         self.pipe = pipe
         self.process = subprocess.Popen(
-            [exe, "serve", "--socket", pipe],
+            [exe, "serve", "--socket", pipe, *extra],
             creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,

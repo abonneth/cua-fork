@@ -1,0 +1,58 @@
+name: ab-focus
+
+on:
+  push:
+    branches: [ab/focus]
+  workflow_dispatch:
+
+jobs:
+  focus:
+    runs-on: windows-11-arm
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [driver-enables-remote-debugging, remote-debugging-already-on]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: cua-driver release
+        shell: pwsh
+        run: |
+          $zip = "$env:RUNNER_TEMP\driver.zip"
+          Invoke-WebRequest "https://github.com/trycua/cua/releases/download/cua-driver-rs-v0.46.1/cua-driver-rs-0.46.1-windows-arm64-binary.zip" -OutFile $zip
+          Expand-Archive $zip "$env:RUNNER_TEMP\driver"
+          $exe = (Get-ChildItem "$env:RUNNER_TEMP\driver" -Recurse -Filter cua-driver.exe | Select-Object -First 1).FullName
+          & $exe --version
+          "DRIVER=$exe" >> $env:GITHUB_ENV
+      - name: Edge default profile
+        shell: pwsh
+        run: |
+          $edge = "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe"
+          (Get-Item $edge).VersionInfo.ProductVersion
+          "EDGE=$edge" >> $env:GITHUB_ENV
+          $state = "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Local State"
+          Start-Process $edge -ArgumentList '--no-first-run', '--no-default-browser-check', 'about:blank'
+          foreach ($i in 1..60) { if (Test-Path $state) { break }; Start-Sleep 1 }
+          Start-Sleep 5
+          Get-Process msedge -ErrorAction SilentlyContinue | Stop-Process -Force
+          Start-Sleep 3
+          if ("${{ matrix.variant }}" -eq "remote-debugging-already-on") {
+            $json = Get-Content $state -Raw | ConvertFrom-Json
+            if (-not $json.devtools) { $json | Add-Member devtools ([pscustomobject]@{}) }
+            $json.devtools | Add-Member remote_debugging ([pscustomobject]@{ 'user-enabled' = $true }) -Force
+            $json | ConvertTo-Json -Depth 100 -Compress | Set-Content $state -Encoding utf8
+          }
+          (Get-Content $state -Raw | ConvertFrom-Json).devtools | ConvertTo-Json -Compress
+      - name: Probe
+        working-directory: ab
+        shell: pwsh
+        run: |
+          Get-Process WWAHost, SearchHost, StartMenuExperienceHost -ErrorAction SilentlyContinue | Stop-Process -Force; Start-Sleep 2
+          Start-Process $env:EDGE -ArgumentList '--no-first-run', '--no-default-browser-check', 'https://example.com'
+          Start-Sleep 10
+          $port = "$env:LOCALAPPDATA\Microsoft\Edge\User Data\DevToolsActivePort"
+          "DevToolsActivePort before the probe: $(Test-Path $port)"
+          python focus_steal.py $env:DRIVER ${{ matrix.variant }}
