@@ -8,7 +8,7 @@ import sys
 import threading
 import time
 
-from driver import Daemon, exe_name, user32
+from driver import CREATE_NEW_PROCESS_GROUP, CREATE_NO_WINDOW, Daemon, exe_name, user32
 
 kernel32 = ctypes.WinDLL("kernel32")
 REPS = int(os.environ.get("REPS", "5"))
@@ -115,12 +115,19 @@ def attach(daemon: Daemon, where: dict) -> tuple[str, dict]:
     effects = structured(prepared).get("side_effects") or (structured(prepared).get("detail") or {}).get("setup_side_effects") or {}
     state = daemon.call("get_browser_state", where)
     if not structured(state).get("target_id"):
-        return "FAILED " + json.dumps(prepared)[:300], effects
+        return "FAILED " + json.dumps(prepared)[:1500], effects
     return "bound", effects
 
 
+def shot(name: str) -> None:
+    from PIL import ImageGrab
+
+    os.makedirs("shots", exist_ok=True)
+    ImageGrab.grab(all_screens=True).save(os.path.join("shots", name))
+
+
 def main() -> None:
-    daemon = Daemon(EXE, rf"\\.\pipe\ab-focus-{VARIANT}", ("--grant", "existing-profile"))
+    daemon = Daemon(EXE, rf"\\.\pipe\ab-focus-{VARIANT}", ("--grant", "existing-profile"), CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP)
     rows = []
     try:
         for rep in range(1, REPS + 1):
@@ -132,6 +139,8 @@ def main() -> None:
             watch = Foreground()
             outcome, effects = attach(daemon, where)
             phases["attach"] = watch.stop()
+            if outcome.startswith("FAILED") and rep == 1:
+                shot(f"failed-attach-{VARIANT}.png")
             state = structured(daemon.call("get_browser_state", where))
             tab = next((t["tab_id"] for t in state.get("tabs", []) if t.get("active")), None)
             front_host()

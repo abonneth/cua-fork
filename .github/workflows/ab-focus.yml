@@ -55,4 +55,11 @@ jobs:
           Start-Sleep 10
           $port = "$env:LOCALAPPDATA\Microsoft\Edge\User Data\DevToolsActivePort"
           "DevToolsActivePort before the probe: $(Test-Path $port)"
+          pip install -q pillow
           python focus_steal.py $env:DRIVER ${{ matrix.variant }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: shots-${{ matrix.variant }}
+          path: ab/shots
+          if-no-files-found: ignore
