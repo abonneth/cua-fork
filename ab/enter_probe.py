@@ -202,15 +202,32 @@ def suggestion_select(win: auto.Control, omni: auto.Control) -> None:
     post_enter(win, omni)
 
 
-METHODS = {
-    "no-enter (control)": None,
-    "PostMessage Enter to the browser window": post_enter,
-    "SendMessage Enter to the browser window": send_enter,
-    "UIA SetFocus + PostMessage Enter": uia_focus_then_post_enter,
-    "UIA LegacyIAccessible DoDefaultAction on the omnibox": omnibox_default_action,
-    "UIA Invoke / DoDefaultAction on the suggestion row": suggestion_invoke,
-    "UIA Select the suggestion row + PostMessage Enter": suggestion_select,
-}
+def checkbox(win: auto.Control) -> auto.Control | None:
+    for c, _ in auto.WalkControl(win, maxDepth=16):
+        if c.ControlTypeName == "CheckBoxControl" and pattern(c, "Toggle") is not None:
+            return c
+    return None
+
+
+def wait(cond, seconds: float = 3.0) -> bool:
+    deadline = time.monotonic() + seconds
+    while not cond() and time.monotonic() < deadline:
+        time.sleep(0.1)
+    return cond()
+
+
+def step(results: dict, name: str, action) -> bool:
+    front_host()
+    watch = Foreground()
+    try:
+        ok = bool(action())
+    except Exception as error:
+        print(f"  {name}: {type(error).__name__}: {error}")
+        ok = False
+    away = watch.stop()
+    done, stole = results.setdefault(name, [0, 0])
+    results[name] = [done + ok, stole + (away > 0)]
+    return ok
 
 
 def main() -> None:
@@ -218,52 +235,46 @@ def main() -> None:
     subprocess.Popen([edge_exe, "--no-first-run", "--no-default-browser-check", "https://example.com"])
     time.sleep(8)
     auto.SetGlobalSearchTimeout(3)
-    rows = []
-    dumped = False
-    for name, method in METHODS.items():
-        navigated = closed = errors = 0
-        nav_away = close_away = 0
-        for _ in range(REPS):
-            win = edge()
-            before = len(tabs(win))
-            print(f"  {name}: host fronted={front_host()}")
-            watch = Foreground()
-            try:
-                win.ButtonControl(Name="New Tab").GetInvokePattern().Invoke()
-                deadline = time.monotonic() + 3
-                while len(tabs(win)) != before + 1 and time.monotonic() < deadline:
-                    time.sleep(0.1)
-                omni = omnibox(win)
-                omni.GetValuePattern().SetValue(URL)
-                time.sleep(0.8)
-                if not dumped:
-                    dumped = True
-                    print("---- omnibox popup after SetValue ----")
-                    dump_popup()
-                if method:
-                    method(win, omni)
-                deadline = time.monotonic() + 3
-                while not on_setup_page(win) and time.monotonic() < deadline:
-                    time.sleep(0.2)
-                navigated += on_setup_page(win)
-            except Exception as error:
-                errors += 1
-                print(f"  {name}: {type(error).__name__}: {error}")
-            nav_away += watch.stop() > 0
-            front_host()
-            watch = Foreground()
-            try:
-                tab = selected_tab(win)
-                tab.ButtonControl(Name="Close tab").GetInvokePattern().Invoke()
-                deadline = time.monotonic() + 3
-                while len(tabs(win)) != before and time.monotonic() < deadline:
-                    time.sleep(0.1)
-                closed += len(tabs(win)) == before
-            except Exception as error:
-                print(f"  close after {name}: {type(error).__name__}: {error}")
-            close_away += watch.stop() > 0
-        rows.append(f"| {name} | {navigated}/{REPS} | {nav_away}/{REPS} | {closed}/{REPS} | {close_away}/{REPS} | {errors} |")
-    lines = ["| method | navigated to the setup page | took the foreground | UIA close-tab closed it | close took the foreground | errors |", "|---|---|---|---|---|---|", *rows]
+    results: dict = {}
+    for rep in range(REPS):
+        win = edge()
+        before = len(tabs(win))
+        print(f"rep {rep + 1}")
+
+        def new_tab() -> bool:
+            pattern(win.ButtonControl(Name="New Tab"), "Invoke").Invoke()
+            return wait(lambda: len(tabs(win)) == before + 1)
+
+        def set_url() -> bool:
+            pattern(omnibox(win), "Value").SetValue(URL)
+            return True
+
+        def enter() -> bool:
+            post_enter(win, None)
+            return wait(lambda: on_setup_page(win))
+
+        def toggle_on() -> bool:
+            box = wait(lambda: checkbox(win) is not None, 5) and checkbox(win)
+            pattern(box, "Toggle").Toggle()
+            return pattern(box, "Toggle").ToggleState == 1
+
+        def toggle_off() -> bool:
+            box = checkbox(win)
+            pattern(box, "Toggle").Toggle()
+            return pattern(box, "Toggle").ToggleState == 0
+
+        def close_invoke() -> bool:
+            pattern(selected_tab(win).ButtonControl(Name="Close tab"), "Invoke").Invoke()
+            return wait(lambda: len(tabs(win)) == before)
+
+        step(results, "1 new tab: UIA Invoke New Tab button", new_tab)
+        step(results, "2 omnibox: UIA SetValue", set_url)
+        step(results, "3 navigate: PostMessage Enter", enter)
+        step(results, "4 checkbox on: UIA Toggle", toggle_on)
+        step(results, "5 checkbox off: UIA Toggle", toggle_off)
+        step(results, "6 close tab: UIA Invoke Close tab button", close_invoke)
+    lines = ["| step | worked | took the foreground |", "|---|---|---|"]
+    lines += [f"| {name} | {done}/{REPS} | {stole}/{REPS} |" for name, (done, stole) in results.items()]
     summary = "\n".join(lines)
     print(summary)
     with open(os.environ.get("GITHUB_STEP_SUMMARY", os.devnull), "a", encoding="utf-8") as out:
