@@ -19,7 +19,7 @@ user32.GetForegroundWindow.restype = wt.HWND
 
 ADDRESS = ("127.0.0.1", 47613)
 URL = "edge://inspect/#remote-debugging"
-REPS = 3
+REPS = 6
 WM_KEYDOWN, WM_KEYUP, WM_CHAR, WM_COMMAND, VK_RETURN = 0x100, 0x101, 0x102, 0x111, 0x0D
 IDC_NEW_TAB, IDC_CLOSE_TAB = 34014, 34015
 
@@ -56,8 +56,8 @@ def on_setup_page(win: auto.Control) -> bool:
 
 
 def checkbox(win: auto.Control) -> auto.Control | None:
-    for c, _ in auto.WalkControl(win, maxDepth=16):
-        if c.ControlTypeName == "CheckBoxControl" and pattern(c, "Toggle") is not None:
+    for c, _ in auto.WalkControl(win, maxDepth=40):
+        if c.ControlTypeName in ("CheckBoxControl", "ButtonControl") and pattern(c, "Toggle") is not None:
             return c
     return None
 
@@ -217,7 +217,7 @@ def probe() -> None:
     pids = edge_pids()
     conn = Client(ADDRESS)
     results: dict[tuple[str, str], list[int]] = {}
-    for route, steps in ROUTES.items():
+    for route, steps in ((r, ROUTES[r]) for r in sys.argv[1:]):
         for rep in range(1, REPS + 1):
             conn.send("reset")
             conn.recv()

@@ -9,6 +9,10 @@ jobs:
   enter:
     runs-on: windows-11-arm
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        route: ["UIA", "window messages"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -27,5 +31,5 @@ jobs:
           Start-Sleep 8
           $worker = Start-Process python -ArgumentList 'enter_probe.py', 'worker' -PassThru -NoNewWindow
           Start-Sleep 4
-          python enter_probe.py
+          python enter_probe.py "${{ matrix.route }}"
           $worker.WaitForExit(10000)
