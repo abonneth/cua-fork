@@ -154,6 +154,15 @@ def host_window() -> int:
 
 
 def front(hwnd: int) -> bool:
+    if attach_front(hwnd):
+        return True
+    user32.keybd_event(0x1B, 0, 0, 0)
+    user32.keybd_event(0x1B, 0, 2, 0)
+    time.sleep(0.2)
+    return attach_front(hwnd)
+
+
+def attach_front(hwnd: int) -> bool:
     fg_thread = user32.GetWindowThreadProcessId(user32.GetForegroundWindow(), None)
     me = kernel32.GetCurrentThreadId()
     user32.AttachThreadInput(me, fg_thread, True)
