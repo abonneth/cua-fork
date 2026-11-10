@@ -134,6 +134,12 @@ class Worker:
         if step == "uia close tab":
             pattern(selected_tab(win).ButtonControl(Name="Close tab"), "Invoke").Invoke()
             return wait(lambda: len(tabs(win)) == self.before)
+        if step == "msaa new tab":
+            pattern(win.ButtonControl(Name="New Tab"), "LegacyIAccessible").DoDefaultAction()
+            return wait(lambda: len(tabs(win)) == self.before + 1)
+        if step == "msaa close tab":
+            pattern(selected_tab(win).ButtonControl(Name="Close tab"), "LegacyIAccessible").DoDefaultAction()
+            return wait(lambda: len(tabs(win)) == self.before)
         if step == "WM_COMMAND close tab":
             post(hwnd, WM_COMMAND, IDC_CLOSE_TAB)
             return wait(lambda: len(tabs(win)) == self.before)
@@ -226,6 +232,7 @@ ROUTES = {
     "UIA": ["uia new tab", "uia SetValue url", "PostMessage Enter", "uia Toggle on", "uia Toggle off", "uia close tab"],
     "window messages": ["WM_COMMAND new tab", "WM_CHAR type url", "PostMessage Enter", "uia Toggle on", "uia Toggle off", "WM_COMMAND close tab"],
     "msaa toggle": ["WM_COMMAND new tab", "WM_CHAR type url", "PostMessage Enter", "msaa toggle on", "msaa toggle off", "WM_COMMAND close tab"],
+    "msaa everywhere": ["msaa new tab", "WM_CHAR type url", "PostMessage Enter", "msaa toggle on", "msaa toggle off", "msaa close tab"],
     "posted click toggle": ["WM_COMMAND new tab", "WM_CHAR type url", "PostMessage Enter", "posted click toggle on", "posted click toggle off", "WM_COMMAND close tab"],
 }
 

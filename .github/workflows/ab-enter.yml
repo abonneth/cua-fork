@@ -12,7 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        route: ["msaa toggle", "posted click toggle"]
+        route: ["msaa everywhere"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
