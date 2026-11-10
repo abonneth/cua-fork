@@ -22,7 +22,7 @@ def host_window() -> int:
     def pump() -> None:
         user32.CreateWindowExW.restype = wt.HWND
         user32.CreateWindowExW.argtypes = [wt.DWORD, wt.LPCWSTR, wt.LPCWSTR, wt.DWORD, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, wt.HWND, wt.HMENU, wt.HINSTANCE, wt.LPVOID]
-        box["hwnd"] = user32.CreateWindowExW(0, "Edit", "host app", 0x10CF0000, 50, 50, 500, 300, None, None, None, None)
+        box["hwnd"] = user32.CreateWindowExW(0, "Edit", "host app", 0x10CF0000, 0, 470, 380, 220, None, None, None, None)
         ready.set()
         msg = wt.MSG()
         while user32.GetMessageW(ctypes.byref(msg), None, 0, 0) > 0:
