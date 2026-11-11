@@ -18,10 +18,12 @@ jobs:
       fail-fast: false
       matrix:
         variant: [driver-enables-remote-debugging]
-        build: [E]
+        build: [G]
         typing: [on]
-        prewarm: [off, on]
-        trial: [1, 2, 3]
+        prewarm: [off]
+        trial: [1, 2, 3, 4]
+        include:
+          - {variant: driver-enables-remote-debugging, build: G, typing: "on", prewarm: "on", trial: 5}
     steps:
       - uses: actions/checkout@v4
       - name: Tools
@@ -39,7 +41,7 @@ jobs:
             git -C "$src" diff | grep -q "^+    true" || { echo "patch did not apply" >&2; exit 1; }
             git -C "$src" -c user.name=ab -c user.email=ab@example.com commit -qam "ab: guard same-Space attach"
           fi
-          if [[ "${{ matrix.build }}" == C || "${{ matrix.build }}" == D || "${{ matrix.build }}" == E ]]; then
+          if [[ "${{ matrix.build }}" == C || "${{ matrix.build }}" == D || "${{ matrix.build }}" == E || "${{ matrix.build }}" == G ]]; then
             setup="$src/libs/cua-driver/rust/crates/platform-macos/src/browser/setup_ui.rs"
             perl ab/wait_for_ax_checkbox.pl < "$setup" > "$setup.new" && mv "$setup.new" "$setup"
             git -C "$src" diff
@@ -51,9 +53,14 @@ jobs:
             git -C "$src" diff | grep -q "from_secs(30)" || { echo "timeout patch did not apply" >&2; exit 1; }
             git -C "$src" -c user.name=ab -c user.email=ab@example.com commit -qam "ab: 30 s setup readiness"
           fi
-          if [[ "${{ matrix.build }}" == E ]]; then
+          if [[ "${{ matrix.build }}" == E || "${{ matrix.build }}" == G ]]; then
             setup="$src/libs/cua-driver/rust/crates/platform-macos/src/browser/setup_ui.rs"
             perl ab/diagnose_not_ready.pl < "$setup" > "$setup.new" && mv "$setup.new" "$setup"
+            if [[ "${{ matrix.build }}" == G ]]; then
+              enablement="$src/libs/cua-driver/rust/crates/platform-macos/src/ax/enablement.rs"
+              perl ab/trace.pl setup < "$setup" > "$setup.new" && mv "$setup.new" "$setup"
+              perl ab/trace.pl enablement < "$enablement" > "$enablement.new" && mv "$enablement.new" "$enablement"
+            fi
             git -C "$src" -c user.name=ab -c user.email=ab@example.com commit -qam "ab: describe the AX tree when setup is not ready"
           fi
           echo "SRC=$src" >> "$GITHUB_ENV"

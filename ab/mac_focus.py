@@ -249,6 +249,34 @@ def prepare_profile() -> None:
     print("DevToolsActivePort before the probe:", os.path.exists(os.path.join(PROFILE, "DevToolsActivePort")))
 
 
+TRACE = "/tmp/cua-ab-trace.log"
+trace_read = 0
+
+
+def dump_trace(label: str) -> None:
+    global trace_read
+    try:
+        with open(TRACE) as handle:
+            lines = handle.read().splitlines()
+    except OSError:
+        lines = []
+    fresh = [line.split(" ", 1) for line in lines[trace_read:] if " " in line]
+    trace_read = len(lines)
+    if not fresh:
+        print(f"trace {label}: empty")
+        return
+    start = float(fresh[0][0])
+    groups: list[list] = []
+    for stamp, payload in fresh:
+        if groups and groups[-1][1] == payload:
+            groups[-1][2] += 1
+            groups[-1][3] = float(stamp) - start
+        else:
+            groups.append([float(stamp) - start, payload, 1, float(stamp) - start])
+    for first, payload, count, last in groups:
+        print(f"trace {label}: +{first:.1f}s..+{last:.1f}s x{count} {payload}")
+
+
 def chrome_window() -> dict:
     windows = structured(call("list_windows", {"on_screen_only": True})).get("windows", [])
     chromes = [w for w in windows if "chrome" in str(w.get("app_name", "")).lower() and w.get("title")]
@@ -260,6 +288,7 @@ def main() -> None:
     with open(HOST_FILE, "w") as handle:
         handle.write("the user's document\n")
     prepare_profile()
+    dump_trace("prepare")
     watch = Watch()
     if TYPING:
         built = run(["swiftc", "-O", os.path.join(HERE, "typist.swift"), "-o", "/tmp/typist"], 600)
@@ -309,6 +338,7 @@ def main() -> None:
         call("start_session", {"session": "prewarm"})
         seen = structured(call("get_window_state", {**chrome_window(), "session": "prewarm", "tree_format": "elements"})).get("elements") or []
         print("prewarm: chrome elements", len(seen), [e.get("role") for e in seen][:12])
+        dump_trace("prewarm")
         call("end_session", {"session": "prewarm"})
         time.sleep(5)
     rows = []
@@ -337,6 +367,7 @@ def main() -> None:
         ended, phases["end_session"] = phase(lambda: structured(call("end_session", {"session": session})), "end_session", rep)
         done = sorted(k for k, v in effects.items() if v is True)
         print(f"rep {rep}: {outcome} bound={bound} side_effects={done} end={json.dumps(ended)[:200]}")
+        dump_trace(f"rep {rep}")
         for name, seen in phases.items():
             print(f"  {name}: {json.dumps(seen)}")
         rows.append(phases)
