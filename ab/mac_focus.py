@@ -307,7 +307,7 @@ def chrome_window() -> dict:
 
 def web_area_present(session: str) -> bool:
     elements = structured(call("get_window_state", {**chrome_window(), "session": session, "tree_format": "elements"})).get("elements") or []
-    return any(e.get("role") == "AXWebArea" for e in elements)
+    return any(e.get("role") == "AXWebArea" or e.get("in_web_content") for e in elements)
 
 
 def first_attach_cycles(cycles: int, phase, front_host) -> None:
@@ -321,6 +321,8 @@ def first_attach_cycles(cycles: int, phase, front_host) -> None:
         restart_chrome()
         front_host()
         note = ""
+        present = None
+        web_after = None
         if arm in ("walk", "walk_until_web"):
             call("start_session", {"session": f"w{cycle}"})
             started = time.time()
@@ -330,7 +332,8 @@ def first_attach_cycles(cycles: int, phase, front_host) -> None:
                 time.sleep(1)
                 present = web_area_present(f"w{cycle}")
             if arm == "walk_until_web":
-                note += f" web after {time.time() - started:.1f}s={present}"
+                web_after = round(time.time() - started, 1)
+                note += f" web after {web_after}s={present}"
             call("end_session", {"session": f"w{cycle}"})
         session = f"c{cycle}"
         where = {"session": session, **chrome_window()}
@@ -341,11 +344,14 @@ def first_attach_cycles(cycles: int, phase, front_host) -> None:
         call("end_session", {"session": session})
         front = sum(ms for who, ms in seen["front"] if "Chrome" in who)
         top = sum(ms for who, ms in seen["top"] if "Chrome" in who)
-        results[arm].append(bound)
+        results[arm].append((bound, present, web_after))
         print(f"cycle {cycle} arm={arm} bound={bound} took={seen['took_s']}s chrome_front_ms={front} chrome_top_ms={top} keys={seen['keys']} {note} {message}")
         dump_trace(f"cycle {cycle}")
-    lines = ["### first attach after a Chrome launch, build " + BUILD, "", "| arm | bound |", "|---|---|"]
-    lines += [f"| {arm} | {sum(seen)}/{len(seen)} |" for arm, seen in results.items()]
+    lines = ["### first attach after a Chrome launch, build " + BUILD, "", "| arm | bound | page tree read | seconds to page tree |", "|---|---|---|---|"]
+    for arm, seen in results.items():
+        read = [row for row in seen if row[1] is not None]
+        waits = sorted(row[2] for row in read if row[1] and row[2] is not None)
+        lines.append(f"| {arm} | {sum(row[0] for row in seen)}/{len(seen)} | {sum(row[1] for row in read)}/{len(read)} | {waits} |")
     summary = "\n".join(lines)
     print(summary)
     with open(os.environ.get("GITHUB_STEP_SUMMARY", os.devnull), "a") as out:

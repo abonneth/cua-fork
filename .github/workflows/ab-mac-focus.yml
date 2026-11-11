@@ -18,10 +18,10 @@ jobs:
       fail-fast: false
       matrix:
         variant: [driver-enables-remote-debugging]
-        build: [H]
+        build: [A, M, B, K]
         typing: [on]
         prewarm: [off]
-        trial: [1, 2, 3]
+        trial: [1, 2]
     steps:
       - uses: actions/checkout@v4
       - name: Tools
@@ -36,7 +36,7 @@ jobs:
           crates="$src/libs/cua-driver/rust/crates"
           macos="$crates/platform-macos/src"
           patch() { perl "ab/$1" ${3:-} < "$2" > "$2.new" && mv "$2.new" "$2"; }
-          if [[ "$b" != A ]]; then
+          if [[ "$b" != A && "$b" != M ]]; then
             perl -0pi -e 's/fn guarded_attach_allowed\(window_on_current_space: Option<bool>\) -> bool \{\n    window_on_current_space == Some\(false\)\n\}/fn guarded_attach_allowed(_window_on_current_space: Option<bool>) -> bool {\n    true\n}/' "$macos/browser/platform.rs"
             git -C "$src" diff | grep -q "^+    true" || { echo "patch did not apply" >&2; exit 1; }
           fi
@@ -53,6 +53,7 @@ jobs:
           if [[ "$b" == H || "$b" == J ]]; then patch trace.pl "$macos/ax/bindings.rs" bindings; fi
           if [[ "$b" == J ]]; then patch refusal_backoff.pl "$macos/ax/enablement.rs"; fi
           if [[ "$b" == I ]]; then patch trace.pl "$macos/ax/bindings.rs" bindings-fallback; fi
+          if [[ "$b" == K || "$b" == M ]]; then git -C "$src" apply "$GITHUB_WORKSPACE/ab/opt_in_backoff.patch"; fi
           git -C "$src" diff --stat
           if [[ "$b" != A ]]; then
             git -C "$src" -c user.name=ab -c user.email=ab@example.com commit -qam "ab: build $b"
@@ -69,7 +70,7 @@ jobs:
           AB_PREWARM: ${{ matrix.prewarm }}
           AB_TRIAL: ${{ matrix.trial }}
           AB_CYCLES: "12"
-          AB_ARMS: "sonoma_default,sonoma_on,sonoma_off"
+          AB_ARMS: ${{ (matrix.build == 'A' || matrix.build == 'M') && 'walk_until_web' || 'off' }}
         run: |
           set -euo pipefail
           script="$SRC/scripts/ci/macos/ab-run.sh"
@@ -87,6 +88,11 @@ jobs:
             CUA_E2E_SOURCE_SHA="$SRC_SHA" CUA_E2E_WORKFLOW_SHA="$SRC_SHA" \
             CARGO_TARGET_DIR="$RUNNER_TEMP/target" \
             bash "$script"
+      - name: Unit tests
+        if: ${{ !cancelled() && matrix.build == 'M' && matrix.trial == 1 }}
+        run: |
+          cd "$SRC/libs/cua-driver/rust"
+          CARGO_TARGET_DIR="$RUNNER_TEMP/target" cargo test -p platform-macos --lib ax::enablement
       - uses: actions/upload-artifact@v4
         if: always()
         with:
