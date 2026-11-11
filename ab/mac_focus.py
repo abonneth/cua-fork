@@ -341,6 +341,9 @@ def first_attach_cycles(cycles: int, phase, front_host) -> None:
         reply, seen = phase(lambda: structured(call("browser_prepare", {**where, "strategy": {"kind": "existing_profile"}})), f"first-{arm}", cycle + 10)
         bound = bool(structured(call("get_browser_state", where)).get("target_id"))
         message = (reply.get("refusal") or {}).get("message", "")[:120]
+        if not bound:
+            shot(f"{VARIANT}-{BUILD}-unbound-c{cycle}.png")
+            print("unbound reply:", json.dumps(reply)[:6000])
         call("end_session", {"session": session})
         front = sum(ms for who, ms in seen["front"] if "Chrome" in who)
         top = sum(ms for who, ms in seen["top"] if "Chrome" in who)
