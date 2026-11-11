@@ -13,7 +13,7 @@ env:
 jobs:
   focus:
     runs-on: macos-26
-    timeout-minutes: 150
+    timeout-minutes: 75
     strategy:
       fail-fast: false
       matrix:
@@ -51,7 +51,7 @@ jobs:
           cat >> "$script" <<'EOF'
           mark_phase "ab-probe"
           MATRIX_STATUS=0
-          python3 "${AB_PROBE}" "${INSTALLED_BIN}" "${DAEMON_SOCKET}" "${AB_VARIANT}" "${AB_BUILD}" || MATRIX_STATUS=$?
+          /usr/bin/perl -e 'alarm shift; exec @ARGV' 2700 python3 -u "${AB_PROBE}" "${INSTALLED_BIN}" "${DAEMON_SOCKET}" "${AB_VARIANT}" "${AB_BUILD}" || MATRIX_STATUS=$?
           kill "${WATCHDOG_PID}" >/dev/null 2>&1 || true
           exit "${MATRIX_STATUS}"
           EOF

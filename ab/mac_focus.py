@@ -1,5 +1,6 @@
 """Which steps of a macOS existing-profile Chrome attach take the foreground from the user's app, per session."""
 
+import faulthandler
 import json
 import os
 import socket
@@ -8,6 +9,8 @@ import sys
 import threading
 import time
 
+sys.stdout.reconfigure(line_buffering=True)
+faulthandler.dump_traceback_later(2400, exit=True)
 BIN, SOCK, VARIANT, BUILD = sys.argv[1:5]
 REPS = int(os.environ.get("REPS", "5"))
 SETTLE_S = 1.5
@@ -19,11 +22,22 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 SHOTS = os.path.join(HERE, "shots")
 
 
+def run(cmd: list[str], timeout: float = 60) -> subprocess.CompletedProcess:
+    print("step:", " ".join(cmd)[:160])
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        print(f"TIMEOUT after {timeout}s: {cmd[0]}")
+        return subprocess.CompletedProcess(cmd, -1, "", "timeout")
+
+
 class Watch:
     """Front app (polled every 3 ms), activation notifications, and the owner of the topmost normal window."""
 
     def __init__(self) -> None:
-        subprocess.run(["swiftc", "-O", os.path.join(HERE, "front_watch.swift"), "-o", "/tmp/front_watch"], check=True)
+        built = run(["swiftc", "-O", os.path.join(HERE, "front_watch.swift"), "-o", "/tmp/front_watch"], 600)
+        if built.returncode != 0:
+            raise RuntimeError(f"swiftc failed: {built.stderr[-2000:]}")
         self.events: list[tuple[float, str, str]] = []
         self.proc = subprocess.Popen(["/tmp/front_watch"], stdout=subprocess.PIPE, text=True)
         ready = threading.Event()
@@ -79,6 +93,7 @@ def request(payload: dict) -> dict:
 
 
 def call(tool: str, args: dict) -> dict:
+    print("call:", tool)
     return request({"method": "call", "name": tool, "args": args})
 
 
@@ -89,11 +104,11 @@ def structured(reply: dict) -> dict:
 
 def shot(name: str) -> None:
     os.makedirs(SHOTS, exist_ok=True)
-    subprocess.run(["screencapture", "-x", os.path.join(SHOTS, name)], capture_output=True)
+    run(["screencapture", "-x", os.path.join(SHOTS, name)], 20)
 
 
 def launch_chrome(url: str) -> None:
-    subprocess.run(["open", "-na", CHROME, "--args", "--no-first-run", "--no-default-browser-check", url], check=True)
+    run(["open", "-na", CHROME, "--args", "--no-first-run", "--no-default-browser-check", url])
 
 
 def edit_json(path: str, edit) -> None:
@@ -112,7 +127,7 @@ def prepare_profile() -> None:
             break
         time.sleep(1)
     time.sleep(5)
-    subprocess.run(["pkill", "-x", "Google Chrome"])
+    run(["pkill", "-x", "Google Chrome"])
     time.sleep(4)
 
     def clean_exit(prefs: dict) -> None:
@@ -140,10 +155,10 @@ def main() -> None:
         handle.write("the user's document\n")
     prepare_profile()
     watch = Watch()
-    print("chrome version:", subprocess.run(["defaults", "read", f"{CHROME}/Contents/Info", "CFBundleShortVersionString"], capture_output=True, text=True).stdout.strip())
+    print("chrome version:", run(["defaults", "read", f"{CHROME}/Contents/Info", "CFBundleShortVersionString"]).stdout.strip())
 
     def front_host() -> bool:
-        subprocess.run(["open", "-a", HOST, HOST_FILE])
+        run(["open", "-a", HOST, HOST_FILE])
         time.sleep(1.0)
         return watch.current("front") == HOST
 
