@@ -826,6 +826,8 @@ pub unsafe fn set_bool_attr_true(element: AXUIElementRef, attr_name: &str) -> AX
 pub enum AccessibilityOptIn {
     ManualAccessibility,
     EnhancedUserInterface,
+    /// The app rejected both attributes.
+    Refused,
     NotAccepted,
 }
 
@@ -854,7 +856,7 @@ pub unsafe fn enable_chromium_accessibility(app_element: AXUIElementRef) -> Acce
     if set_bool_attr_true(app_element, "AXEnhancedUserInterface") == kAXErrorSuccess {
         AccessibilityOptIn::EnhancedUserInterface
     } else {
-        AccessibilityOptIn::NotAccepted
+        AccessibilityOptIn::Refused
     }
 }
 
