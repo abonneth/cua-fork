@@ -305,6 +305,12 @@ def main() -> None:
     if TYPING:
         _, control = phase(lambda: time.sleep(2), "control", 0)
         print("control (typing, no driver call):", json.dumps(control))
+    if os.environ.get("AB_PREWARM") == "on":
+        call("start_session", {"session": "prewarm"})
+        seen = structured(call("get_window_state", {**chrome_window(), "session": "prewarm", "tree_format": "elements"})).get("elements") or []
+        print("prewarm: chrome elements", len(seen), [e.get("role") for e in seen][:12])
+        call("end_session", {"session": "prewarm"})
+        time.sleep(5)
     rows = []
     for rep in range(1, REPS + 1):
         session = f"s{rep}"
@@ -322,7 +328,7 @@ def main() -> None:
         bound = bool(state.get("target_id"))
         if not bound and rep == 1:
             shot(f"unbound-{VARIANT}-{BUILD}.png")
-            print("prepare reply:", json.dumps(reply)[:2000])
+            print("prepare reply:", json.dumps(reply)[:8000])
             tree = structured(call("get_window_state", {**where, "session": "reader", "tree_format": "elements"})).get("elements") or []
             print("chrome tree after refusal:", [(e.get("role"), str(e.get("label") or "")[:40]) for e in tree][:80])
         tab = next((t["tab_id"] for t in state.get("tabs", []) if t.get("active")), None)

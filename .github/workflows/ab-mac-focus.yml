@@ -18,8 +18,9 @@ jobs:
       fail-fast: false
       matrix:
         variant: [driver-enables-remote-debugging]
-        build: [D]
+        build: [E]
         typing: [on]
+        prewarm: [off, on]
         trial: [1, 2, 3]
     steps:
       - uses: actions/checkout@v4
@@ -38,7 +39,7 @@ jobs:
             git -C "$src" diff | grep -q "^+    true" || { echo "patch did not apply" >&2; exit 1; }
             git -C "$src" -c user.name=ab -c user.email=ab@example.com commit -qam "ab: guard same-Space attach"
           fi
-          if [[ "${{ matrix.build }}" == C || "${{ matrix.build }}" == D ]]; then
+          if [[ "${{ matrix.build }}" == C || "${{ matrix.build }}" == D || "${{ matrix.build }}" == E ]]; then
             setup="$src/libs/cua-driver/rust/crates/platform-macos/src/browser/setup_ui.rs"
             perl ab/wait_for_ax_checkbox.pl < "$setup" > "$setup.new" && mv "$setup.new" "$setup"
             git -C "$src" diff
@@ -50,6 +51,11 @@ jobs:
             git -C "$src" diff | grep -q "from_secs(30)" || { echo "timeout patch did not apply" >&2; exit 1; }
             git -C "$src" -c user.name=ab -c user.email=ab@example.com commit -qam "ab: 30 s setup readiness"
           fi
+          if [[ "${{ matrix.build }}" == E ]]; then
+            setup="$src/libs/cua-driver/rust/crates/platform-macos/src/browser/setup_ui.rs"
+            perl ab/diagnose_not_ready.pl < "$setup" > "$setup.new" && mv "$setup.new" "$setup"
+            git -C "$src" -c user.name=ab -c user.email=ab@example.com commit -qam "ab: describe the AX tree when setup is not ready"
+          fi
           echo "SRC=$src" >> "$GITHUB_ENV"
           echo "SRC_SHA=$(git -C "$src" rev-parse HEAD)" >> "$GITHUB_ENV"
       - name: Bootstrap driver, then probe
@@ -59,6 +65,7 @@ jobs:
           AB_VARIANT: ${{ matrix.variant }}
           AB_BUILD: ${{ matrix.build }}
           AB_TYPING: ${{ matrix.typing }}
+          AB_PREWARM: ${{ matrix.prewarm }}
         run: |
           set -euo pipefail
           script="$SRC/scripts/ci/macos/ab-run.sh"
@@ -79,7 +86,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: mac-${{ matrix.variant }}-${{ matrix.build }}-typing-${{ matrix.typing }}-t${{ matrix.trial }}
+          name: mac-${{ matrix.variant }}-${{ matrix.build }}-prewarm-${{ matrix.prewarm }}-t${{ matrix.trial }}
           path: |
             ab/shots
             ${{ env.SRC }}/artifacts/cua-driver/macos-hosted-bootstrap
