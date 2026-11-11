@@ -1,0 +1,95 @@
+diff --git a/libs/cua-driver/rust/crates/platform-macos/src/ax/bindings.rs b/libs/cua-driver/rust/crates/platform-macos/src/ax/bindings.rs
+index aec401776d..38dc4d2c1f 100644
+--- a/libs/cua-driver/rust/crates/platform-macos/src/ax/bindings.rs
++++ b/libs/cua-driver/rust/crates/platform-macos/src/ax/bindings.rs
+@@ -826,6 +826,8 @@ pub unsafe fn set_bool_attr_true(element: AXUIElementRef, attr_name: &str) -> AX
+ pub enum AccessibilityOptIn {
+     ManualAccessibility,
+     EnhancedUserInterface,
++    /// The app rejected the `AXEnhancedUserInterface` write, yet reads it back as set.
++    Deferred,
+     /// The app rejected both attributes.
+     Refused,
+     NotAccepted,
+@@ -855,6 +857,8 @@ pub unsafe fn enable_chromium_accessibility(app_element: AXUIElementRef) -> Acce
+     }
+     if set_bool_attr_true(app_element, "AXEnhancedUserInterface") == kAXErrorSuccess {
+         AccessibilityOptIn::EnhancedUserInterface
++    } else if copy_bool_attr(app_element, "AXEnhancedUserInterface") == Some(true) {
++        AccessibilityOptIn::Deferred
+     } else {
+         AccessibilityOptIn::Refused
+     }
+diff --git a/libs/cua-driver/rust/crates/platform-macos/src/ax/enablement.rs b/libs/cua-driver/rust/crates/platform-macos/src/ax/enablement.rs
+index 2bfbd57287..68a027bc45 100644
+--- a/libs/cua-driver/rust/crates/platform-macos/src/ax/enablement.rs
++++ b/libs/cua-driver/rust/crates/platform-macos/src/ax/enablement.rs
+@@ -150,16 +150,16 @@ fn wait_outcome(
+         // Chrome builds its web tree asynchronously after either opt-in, so
+         // both wait for it. Returning at once for `AXEnhancedUserInterface`
+         // let the first read return browser chrome only (CUA-1766).
+-        AccessibilityOptIn::EnhancedUserInterface | AccessibilityOptIn::ManualAccessibility => {
+-            Some(if await_tree() {
+-                Wait::Complete
+-            } else {
+-                Wait::TimedOut {
+-                    attempts: prior_timeouts + 1,
+-                    attempted_at,
+-                }
+-            })
+-        }
++        AccessibilityOptIn::EnhancedUserInterface
++        | AccessibilityOptIn::ManualAccessibility
++        | AccessibilityOptIn::Deferred => Some(if await_tree() {
++            Wait::Complete
++        } else {
++            Wait::TimedOut {
++                attempts: prior_timeouts + 1,
++                attempted_at,
++            }
++        }),
+     }
+ }
+ 
+@@ -293,20 +293,20 @@ pub unsafe fn ensure_chromium_ax_enabled(pid: i32, app_element: AXUIElementRef)
+         Attempt::Skip => return,
+         Attempt::Run { prior_timeouts } => prior_timeouts,
+     };
+-    let outcome = wait_outcome(
+-        enable_chromium_accessibility(app_element),
+-        prior_timeouts,
+-        attempted_at,
+-        || {
+-            await_web_content(
+-                || probe_web_content(app_element),
+-                || {
++    let opt_in = enable_chromium_accessibility(app_element);
++    // Writing a deferred opt-in again restarts the app's countdown.
++    let reassert = opt_in != AccessibilityOptIn::Deferred;
++    let outcome = wait_outcome(opt_in, prior_timeouts, attempted_at, || {
++        await_web_content(
++            || probe_web_content(app_element),
++            || {
++                if reassert {
+                     enable_chromium_accessibility(app_element);
+-                },
+-                pump_for,
+-            )
+-        },
+-    );
++                }
++            },
++            pump_for,
++        )
++    });
+     if let (Some(stamp), Some(wait)) = (stamp, outcome) {
+         if let Ok(mut state) = ENABLEMENT_STATE.lock() {
+             state.insert(pid, ProcessEnablement { stamp, wait });
+@@ -411,6 +411,7 @@ mod tests {
+         for opt_in in [
+             AccessibilityOptIn::EnhancedUserInterface,
+             AccessibilityOptIn::ManualAccessibility,
++            AccessibilityOptIn::Deferred,
+         ] {
+             let polls = Cell::new(0u32);
+             let ready = wait_outcome(opt_in, 0, now, || {

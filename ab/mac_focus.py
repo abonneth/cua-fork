@@ -171,6 +171,35 @@ def shot(name: str) -> None:
     run(["screencapture", "-x", os.path.join(SHOTS, name)], 20)
 
 
+FRAMES = os.path.join(HERE, "frames")
+FRAMES_ON = os.environ.get("AB_FRAMES") == "on"
+
+
+class Frames:
+    """Screen frames captured back to back, named by milliseconds since the start."""
+
+    def __init__(self, prefix: str) -> None:
+        os.makedirs(FRAMES, exist_ok=True)
+        self.prefix = prefix
+        self.started = time.time()
+        self.done = threading.Event()
+        self.thread = threading.Thread(target=self.loop, daemon=True)
+        self.thread.start()
+
+    def loop(self) -> None:
+        while not self.done.is_set():
+            ms = int((time.time() - self.started) * 1000)
+            path = os.path.join(FRAMES, f"{self.prefix}-{ms:05d}.jpg")
+            try:
+                subprocess.run(["screencapture", "-x", "-t", "jpg", path], capture_output=True, timeout=20)
+            except subprocess.TimeoutExpired:
+                pass
+
+    def stop(self) -> None:
+        self.done.set()
+        self.thread.join(25)
+
+
 SONOMA_FLAG = "SonomaAccessibilityActivationRefinements"
 sonoma = "default"
 
@@ -313,13 +342,26 @@ def web_area_present(session: str) -> bool:
 def first_attach_cycles(cycles: int, phase, front_host) -> None:
     arms = os.environ.get("AB_ARMS", "off,walk,walk_until_web").split(",")
     offset = int(os.environ.get("AB_TRIAL", "0"))
-    results: dict[str, list] = {arm: [] for arm in arms}
+    results: dict[str, list] = {arm: [] for arm in arms if arm != "first_read"}
+    reads: list[tuple[bool, float, bool]] = []
     global sonoma
     for cycle in range(cycles):
         arm = arms[(cycle + offset) % len(arms)]
         sonoma = arm.removeprefix("sonoma_") if arm.startswith("sonoma_") else "default"
         restart_chrome()
         front_host()
+        if arm == "first_read":
+            session = f"r{cycle}"
+            call("start_session", {"session": session})
+            started = time.time()
+            first = web_area_present(session)
+            took = round(time.time() - started, 2)
+            time.sleep(3)
+            second = web_area_present(session)
+            call("end_session", {"session": session})
+            reads.append((first, took, second))
+            print(f"cycle {cycle} arm={arm} first_read_web={first} first_read_s={took} read_3s_later_web={second}")
+            continue
         note = ""
         present = None
         web_after = None
@@ -355,6 +397,9 @@ def first_attach_cycles(cycles: int, phase, front_host) -> None:
         read = [row for row in seen if row[1] is not None]
         waits = sorted(row[2] for row in read if row[1] and row[2] is not None)
         lines.append(f"| {arm} | {sum(row[0] for row in seen)}/{len(seen)} | {sum(row[1] for row in read)}/{len(read)} | {waits} |")
+    if reads:
+        lines += ["", "| first read has page content | first read seconds | read 3 s later has page content |", "|---|---|---|"]
+        lines.append(f"| {sum(row[0] for row in reads)}/{len(reads)} | {sorted(row[1] for row in reads)} | {sum(row[2] for row in reads)}/{len(reads)} |")
     summary = "\n".join(lines)
     print(summary)
     with open(os.environ.get("GITHUB_STEP_SUMMARY", os.devnull), "a") as out:
@@ -390,10 +435,13 @@ def main() -> None:
             for at in (1.5, 4.0, 8.0, 11.0):
                 threading.Timer(at, shot, args=(f"{VARIANT}-{BUILD}-{name}-r{rep}-{at}s.png",)).start()
         typist = Typist() if TYPING else None
+        frames = Frames(f"{BUILD}-{name}-r{rep}") if FRAMES_ON and name.startswith("first-") else None
         out = fn()
         took = time.time() - t0
         time.sleep(SETTLE_S)
         t1 = time.time()
+        if frames:
+            frames.stop()
         keys = None
         if typist:
             sent = typist.stop()
