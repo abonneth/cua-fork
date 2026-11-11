@@ -18,10 +18,10 @@ jobs:
       fail-fast: false
       matrix:
         variant: [driver-enables-remote-debugging]
-        build: [A, M, B, K]
+        build: [K, L]
         typing: [on]
         prewarm: [off]
-        trial: [1, 2]
+        trial: [1, 2, 3]
     steps:
       - uses: actions/checkout@v4
       - name: Tools
@@ -40,7 +40,7 @@ jobs:
             perl -0pi -e 's/fn guarded_attach_allowed\(window_on_current_space: Option<bool>\) -> bool \{\n    window_on_current_space == Some\(false\)\n\}/fn guarded_attach_allowed(_window_on_current_space: Option<bool>) -> bool {\n    true\n}/' "$macos/browser/platform.rs"
             git -C "$src" diff | grep -q "^+    true" || { echo "patch did not apply" >&2; exit 1; }
           fi
-          if [[ "$b" =~ ^[CDEGHIJ]$ ]]; then patch wait_for_ax_checkbox.pl "$macos/browser/setup_ui.rs"; fi
+          if [[ "$b" =~ ^[CDEGHIJL]$ ]]; then patch wait_for_ax_checkbox.pl "$macos/browser/setup_ui.rs"; fi
           if [[ "$b" == D ]]; then
             perl -pi -e 's/(EXISTING_PROFILE_SETUP_READY_TIMEOUT: Duration = Duration::from_secs\()12\)/${1}30)/' "$crates/cua-driver-core/src/browser/setup_descriptor.rs"
             git -C "$src" diff | grep -q "from_secs(30)" || { echo "timeout patch did not apply" >&2; exit 1; }
@@ -53,7 +53,8 @@ jobs:
           if [[ "$b" == H || "$b" == J ]]; then patch trace.pl "$macos/ax/bindings.rs" bindings; fi
           if [[ "$b" == J ]]; then patch refusal_backoff.pl "$macos/ax/enablement.rs"; fi
           if [[ "$b" == I ]]; then patch trace.pl "$macos/ax/bindings.rs" bindings-fallback; fi
-          if [[ "$b" == K || "$b" == M ]]; then git -C "$src" apply "$GITHUB_WORKSPACE/ab/opt_in_backoff.patch"; fi
+          if [[ "$b" =~ ^[KLM]$ ]]; then git -C "$src" apply "$GITHUB_WORKSPACE/ab/opt_in_backoff.patch"; fi
+          if [[ "$b" == K || "$b" == L ]]; then patch trace.pl "$macos/browser/setup_ui.rs" setup; fi
           git -C "$src" diff --stat
           if [[ "$b" != A ]]; then
             git -C "$src" -c user.name=ab -c user.email=ab@example.com commit -qam "ab: build $b"
