@@ -18,7 +18,7 @@ jobs:
       fail-fast: false
       matrix:
         variant: [driver-enables-remote-debugging, remote-debugging-already-on]
-        build: [A, B]
+        build: [C]
         typing: [on]
     steps:
       - uses: actions/checkout@v4
@@ -30,12 +30,18 @@ jobs:
           src="$RUNNER_TEMP/src"
           git clone --quiet --filter=blob:none --no-checkout https://github.com/trycua/cua "$src"
           git -C "$src" checkout --quiet --force "$MAIN_SHA"
-          if [[ "${{ matrix.build }}" == B ]]; then
+          if [[ "${{ matrix.build }}" == B || "${{ matrix.build }}" == C ]]; then
             file="$src/libs/cua-driver/rust/crates/platform-macos/src/browser/platform.rs"
             perl -0pi -e 's/fn guarded_attach_allowed\(window_on_current_space: Option<bool>\) -> bool \{\n    window_on_current_space == Some\(false\)\n\}/fn guarded_attach_allowed(_window_on_current_space: Option<bool>) -> bool {\n    true\n}/' "$file"
             git -C "$src" diff --stat
             git -C "$src" diff | grep -q "^+    true" || { echo "patch did not apply" >&2; exit 1; }
             git -C "$src" -c user.name=ab -c user.email=ab@example.com commit -qam "ab: guard same-Space attach"
+          fi
+          if [[ "${{ matrix.build }}" == C ]]; then
+            setup="$src/libs/cua-driver/rust/crates/platform-macos/src/browser/setup_ui.rs"
+            perl ab/wait_for_ax_checkbox.pl < "$setup" > "$setup.new" && mv "$setup.new" "$setup"
+            git -C "$src" diff
+            git -C "$src" -c user.name=ab -c user.email=ab@example.com commit -qam "ab: guarded setup waits for the AX checkbox"
           fi
           echo "SRC=$src" >> "$GITHUB_ENV"
           echo "SRC_SHA=$(git -C "$src" rev-parse HEAD)" >> "$GITHUB_ENV"
