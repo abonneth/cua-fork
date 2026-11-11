@@ -48,6 +48,24 @@ if ($kind eq "enablement") {
         "loop"
     );
     once(qr/\nfn field_equals\(/, "$helper\nfn field_equals(", "helper");
+} elsif ($kind eq "bindings" || $kind eq "bindings-fallback") {
+    once(
+        qr/\n    let manual = set_bool_attr_true\(app_element, "AXManualAccessibility"\);\n/,
+        "\n    let manual = set_bool_attr_true(app_element, \"AXManualAccessibility\");\n    super::enablement::ab_trace(format!(\"manual={manual}\"));\n",
+        "manual"
+    );
+    once(
+        qr/\n    if set_bool_attr_true\(app_element, "AXEnhancedUserInterface"\) == kAXErrorSuccess \{\n/,
+        "\n    let enhanced = set_bool_attr_true(app_element, \"AXEnhancedUserInterface\");\n    super::enablement::ab_trace(format!(\"enhanced={enhanced}\"));\n    if enhanced == kAXErrorSuccess {\n",
+        "enhanced"
+    );
+    if ($kind eq "bindings-fallback") {
+        once(
+            qr/\n    if manual != kAXErrorAttributeUnsupported \{\n(?:        \/\/[^\n]*\n)*        return AccessibilityOptIn::NotAccepted;\n    \}\n/,
+            "\n    let _ = kAXErrorAttributeUnsupported;\n",
+            "fallback"
+        );
+    }
 } else {
     die "unknown kind $kind";
 }

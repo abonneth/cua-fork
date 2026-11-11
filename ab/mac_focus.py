@@ -1,5 +1,6 @@
 """Which steps of a macOS existing-profile Chrome attach take the foreground from the user's app, per session."""
 
+import collections
 import faulthandler
 import json
 import os
@@ -266,13 +267,16 @@ def dump_trace(label: str) -> None:
         print(f"trace {label}: empty")
         return
     start = float(fresh[0][0])
+    timeline = [(float(stamp) - start, payload) for stamp, payload in fresh if payload.startswith("setup-") or ("outcome=" in payload and "outcome=None" not in payload)]
+    other = collections.Counter(payload.split(" waited_ms=")[0] for _, payload in fresh if not payload.startswith("setup-"))
+    print(f"trace {label}: calls {dict(other.most_common(12))}")
     groups: list[list] = []
-    for stamp, payload in fresh:
+    for at, payload in timeline:
         if groups and groups[-1][1] == payload:
             groups[-1][2] += 1
-            groups[-1][3] = float(stamp) - start
+            groups[-1][3] = at
         else:
-            groups.append([float(stamp) - start, payload, 1, float(stamp) - start])
+            groups.append([at, payload, 1, at])
     for first, payload, count, last in groups:
         print(f"trace {label}: +{first:.1f}s..+{last:.1f}s x{count} {payload}")
 

@@ -18,12 +18,10 @@ jobs:
       fail-fast: false
       matrix:
         variant: [driver-enables-remote-debugging]
-        build: [G]
+        build: [H, I]
         typing: [on]
         prewarm: [off]
-        trial: [1, 2, 3, 4]
-        include:
-          - {variant: driver-enables-remote-debugging, build: G, typing: "on", prewarm: "on", trial: 5}
+        trial: [1, 2, 3]
     steps:
       - uses: actions/checkout@v4
       - name: Tools
@@ -34,34 +32,29 @@ jobs:
           src="$RUNNER_TEMP/src"
           git clone --quiet --filter=blob:none --no-checkout https://github.com/trycua/cua "$src"
           git -C "$src" checkout --quiet --force "$MAIN_SHA"
-          if [[ "${{ matrix.build }}" != A ]]; then
-            file="$src/libs/cua-driver/rust/crates/platform-macos/src/browser/platform.rs"
-            perl -0pi -e 's/fn guarded_attach_allowed\(window_on_current_space: Option<bool>\) -> bool \{\n    window_on_current_space == Some\(false\)\n\}/fn guarded_attach_allowed(_window_on_current_space: Option<bool>) -> bool {\n    true\n}/' "$file"
-            git -C "$src" diff --stat
+          b="${{ matrix.build }}"
+          crates="$src/libs/cua-driver/rust/crates"
+          macos="$crates/platform-macos/src"
+          patch() { perl "ab/$1" ${3:-} < "$2" > "$2.new" && mv "$2.new" "$2"; }
+          if [[ "$b" != A ]]; then
+            perl -0pi -e 's/fn guarded_attach_allowed\(window_on_current_space: Option<bool>\) -> bool \{\n    window_on_current_space == Some\(false\)\n\}/fn guarded_attach_allowed(_window_on_current_space: Option<bool>) -> bool {\n    true\n}/' "$macos/browser/platform.rs"
             git -C "$src" diff | grep -q "^+    true" || { echo "patch did not apply" >&2; exit 1; }
-            git -C "$src" -c user.name=ab -c user.email=ab@example.com commit -qam "ab: guard same-Space attach"
           fi
-          if [[ "${{ matrix.build }}" == C || "${{ matrix.build }}" == D || "${{ matrix.build }}" == E || "${{ matrix.build }}" == G ]]; then
-            setup="$src/libs/cua-driver/rust/crates/platform-macos/src/browser/setup_ui.rs"
-            perl ab/wait_for_ax_checkbox.pl < "$setup" > "$setup.new" && mv "$setup.new" "$setup"
-            git -C "$src" diff
-            git -C "$src" -c user.name=ab -c user.email=ab@example.com commit -qam "ab: guarded setup waits for the AX checkbox"
-          fi
-          if [[ "${{ matrix.build }}" == D ]]; then
-            descriptor="$src/libs/cua-driver/rust/crates/cua-driver-core/src/browser/setup_descriptor.rs"
-            perl -pi -e 's/(EXISTING_PROFILE_SETUP_READY_TIMEOUT: Duration = Duration::from_secs\()12\)/${1}30)/' "$descriptor"
+          if [[ "$b" =~ ^[CDEGHI]$ ]]; then patch wait_for_ax_checkbox.pl "$macos/browser/setup_ui.rs"; fi
+          if [[ "$b" == D ]]; then
+            perl -pi -e 's/(EXISTING_PROFILE_SETUP_READY_TIMEOUT: Duration = Duration::from_secs\()12\)/${1}30)/' "$crates/cua-driver-core/src/browser/setup_descriptor.rs"
             git -C "$src" diff | grep -q "from_secs(30)" || { echo "timeout patch did not apply" >&2; exit 1; }
-            git -C "$src" -c user.name=ab -c user.email=ab@example.com commit -qam "ab: 30 s setup readiness"
           fi
-          if [[ "${{ matrix.build }}" == E || "${{ matrix.build }}" == G ]]; then
-            setup="$src/libs/cua-driver/rust/crates/platform-macos/src/browser/setup_ui.rs"
-            perl ab/diagnose_not_ready.pl < "$setup" > "$setup.new" && mv "$setup.new" "$setup"
-            if [[ "${{ matrix.build }}" == G ]]; then
-              enablement="$src/libs/cua-driver/rust/crates/platform-macos/src/ax/enablement.rs"
-              perl ab/trace.pl setup < "$setup" > "$setup.new" && mv "$setup.new" "$setup"
-              perl ab/trace.pl enablement < "$enablement" > "$enablement.new" && mv "$enablement.new" "$enablement"
-            fi
-            git -C "$src" -c user.name=ab -c user.email=ab@example.com commit -qam "ab: describe the AX tree when setup is not ready"
+          if [[ "$b" =~ ^[EGHI]$ ]]; then patch diagnose_not_ready.pl "$macos/browser/setup_ui.rs"; fi
+          if [[ "$b" =~ ^[GHI]$ ]]; then
+            patch trace.pl "$macos/browser/setup_ui.rs" setup
+            patch trace.pl "$macos/ax/enablement.rs" enablement
+          fi
+          if [[ "$b" == H ]]; then patch trace.pl "$macos/ax/bindings.rs" bindings; fi
+          if [[ "$b" == I ]]; then patch trace.pl "$macos/ax/bindings.rs" bindings-fallback; fi
+          git -C "$src" diff --stat
+          if [[ "$b" != A ]]; then
+            git -C "$src" -c user.name=ab -c user.email=ab@example.com commit -qam "ab: build $b"
           fi
           echo "SRC=$src" >> "$GITHUB_ENV"
           echo "SRC_SHA=$(git -C "$src" rev-parse HEAD)" >> "$GITHUB_ENV"
