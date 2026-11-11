@@ -18,7 +18,7 @@ jobs:
       fail-fast: false
       matrix:
         variant: [driver-enables-remote-debugging]
-        build: [H, J]
+        build: [H]
         typing: [on]
         prewarm: [off]
         trial: [1, 2, 3]
@@ -69,7 +69,7 @@ jobs:
           AB_PREWARM: ${{ matrix.prewarm }}
           AB_TRIAL: ${{ matrix.trial }}
           AB_CYCLES: "12"
-          AB_ARMS: "off"
+          AB_ARMS: "sonoma_default,sonoma_on,sonoma_off"
         run: |
           set -euo pipefail
           script="$SRC/scripts/ci/macos/ab-run.sh"

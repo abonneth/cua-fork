@@ -171,9 +171,17 @@ def shot(name: str) -> None:
     run(["screencapture", "-x", os.path.join(SHOTS, name)], 20)
 
 
+SONOMA_FLAG = "SonomaAccessibilityActivationRefinements"
+sonoma = "default"
+
+
 def launch_chrome(url: str) -> None:
-    print("step: launch chrome", url)
-    args = [f"--user-data-dir={PROFILE}", "--no-first-run", "--no-default-browser-check", "--disable-features=MediaRouter", url]
+    disabled = ["MediaRouter"] + ([SONOMA_FLAG] if sonoma == "off" else [])
+    args = [f"--user-data-dir={PROFILE}", "--no-first-run", "--no-default-browser-check", "--disable-features=" + ",".join(disabled)]
+    if sonoma == "on":
+        args.append("--enable-features=" + SONOMA_FLAG)
+    args.append(url)
+    print("step: launch chrome", " ".join(args[3:]))
     subprocess.Popen(
         [f"{CHROME}/Contents/MacOS/Google Chrome", *args],
         stdin=subprocess.DEVNULL,
@@ -306,12 +314,14 @@ def first_attach_cycles(cycles: int, phase, front_host) -> None:
     arms = os.environ.get("AB_ARMS", "off,walk,walk_until_web").split(",")
     offset = int(os.environ.get("AB_TRIAL", "0"))
     results: dict[str, list] = {arm: [] for arm in arms}
+    global sonoma
     for cycle in range(cycles):
         arm = arms[(cycle + offset) % len(arms)]
+        sonoma = arm.removeprefix("sonoma_") if arm.startswith("sonoma_") else "default"
         restart_chrome()
         front_host()
         note = ""
-        if arm != "off":
+        if arm in ("walk", "walk_until_web"):
             call("start_session", {"session": f"w{cycle}"})
             started = time.time()
             present = web_area_present(f"w{cycle}")
