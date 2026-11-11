@@ -154,13 +154,17 @@ def edit_json(path: str, edit) -> None:
 
 
 def answer_local_network_prompt(timeout_s: float = 30) -> bool:
-    """macOS asks once per app before Chrome's device discovery (chrome://inspect) reaches the local network."""
+    """macOS asks once per app before Chrome's device discovery (the chrome://inspect setup page) reaches the local network."""
     call("start_session", {"session": "warmup"})
     try:
+        prepare = {"session": "warmup", **chrome_window(), "strategy": {"kind": "existing_profile"}, "delivery_mode": "foreground"}
+        print("warm-up attach:", json.dumps(structured(call("browser_prepare", prepare)))[:300])
         deadline = time.time() + timeout_s
         while time.time() < deadline:
-            windows = structured(call("list_windows", {"on_screen_only": True})).get("windows", [])
-            prompt = next((w for w in windows if w.get("app_name") == "UserNotificationCenter"), None)
+            windows = structured(call("list_windows", {"on_screen_only": False})).get("windows", [])
+            prompt = next((w for w in windows if "usernotification" in str(w.get("app_name", "")).lower()), None)
+            if not prompt:
+                print("no prompt yet; apps:", sorted({str(w.get("app_name")) for w in windows}))
             if prompt:
                 target = {"pid": prompt["pid"], "window_id": prompt["window_id"], "session": "warmup"}
                 elements = structured(call("get_window_state", target)).get("elements") or []
@@ -178,7 +182,7 @@ def answer_local_network_prompt(timeout_s: float = 30) -> bool:
 
 def prepare_profile() -> None:
     local_state = os.path.join(PROFILE, "Local State")
-    launch_chrome("chrome://inspect/#devices")
+    launch_chrome("about:blank")
     for _ in range(60):
         if os.path.exists(local_state) and os.path.exists(os.path.join(PROFILE, "Default", "Preferences")):
             break
@@ -191,13 +195,16 @@ def prepare_profile() -> None:
     time.sleep(2)
     run(["pkill", "-x", "Google Chrome"])
     time.sleep(4)
+    stale_port = os.path.join(PROFILE, "DevToolsActivePort")
+    if os.path.exists(stale_port):
+        os.remove(stale_port)
 
     def clean_exit(prefs: dict) -> None:
         prefs.setdefault("profile", {}).update({"exit_type": "Normal", "exited_cleanly": True})
 
     edit_json(os.path.join(PROFILE, "Default", "Preferences"), clean_exit)
-    if VARIANT == "remote-debugging-already-on":
-        edit_json(local_state, lambda s: s.setdefault("devtools", {}).setdefault("remote_debugging", {}).update({"user-enabled": True}))
+    enabled = VARIANT == "remote-debugging-already-on"
+    edit_json(local_state, lambda s: s.setdefault("devtools", {}).setdefault("remote_debugging", {}).update({"user-enabled": enabled}))
     with open(local_state) as handle:
         print("Local State devtools:", json.dumps(json.load(handle).get("devtools")))
     launch_chrome("https://example.com")
