@@ -231,8 +231,17 @@ def prepare_profile() -> None:
     print("answered local network prompt:", answer_local_network_prompt())
     shot("after-warmup.png")
     time.sleep(2)
+    restart_chrome()
+
+
+def restart_chrome() -> None:
+    local_state = os.path.join(PROFILE, "Local State")
     run(["pkill", "-x", "Google Chrome"])
-    time.sleep(4)
+    for _ in range(40):
+        if run(["pgrep", "-x", "Google Chrome"]).returncode != 0:
+            break
+        time.sleep(0.5)
+    time.sleep(2)
     stale_port = os.path.join(PROFILE, "DevToolsActivePort")
     if os.path.exists(stale_port):
         os.remove(stale_port)
@@ -286,6 +295,51 @@ def chrome_window() -> dict:
     chromes = [w for w in windows if "chrome" in str(w.get("app_name", "")).lower() and w.get("title")]
     best = max(chromes, key=lambda w: (w.get("bounds") or {}).get("width", 0) * (w.get("bounds") or {}).get("height", 0))
     return {"pid": best["pid"], "window_id": best["window_id"]}
+
+
+def web_area_present(session: str) -> bool:
+    elements = structured(call("get_window_state", {**chrome_window(), "session": session, "tree_format": "elements"})).get("elements") or []
+    return any(e.get("role") == "AXWebArea" for e in elements)
+
+
+def first_attach_cycles(cycles: int, phase, front_host) -> None:
+    arms = ["off", "walk", "walk_until_web"]
+    offset = int(os.environ.get("AB_TRIAL", "0"))
+    results: dict[str, list] = {arm: [] for arm in arms}
+    for cycle in range(cycles):
+        arm = arms[(cycle + offset) % len(arms)]
+        restart_chrome()
+        front_host()
+        note = ""
+        if arm != "off":
+            call("start_session", {"session": f"w{cycle}"})
+            started = time.time()
+            present = web_area_present(f"w{cycle}")
+            note = f"web at first walk={present}"
+            while arm == "walk_until_web" and not present and time.time() - started < 20:
+                time.sleep(1)
+                present = web_area_present(f"w{cycle}")
+            if arm == "walk_until_web":
+                note += f" web after {time.time() - started:.1f}s={present}"
+            call("end_session", {"session": f"w{cycle}"})
+        session = f"c{cycle}"
+        where = {"session": session, **chrome_window()}
+        call("start_session", {"session": session})
+        reply, seen = phase(lambda: structured(call("browser_prepare", {**where, "strategy": {"kind": "existing_profile"}})), f"first-{arm}", cycle + 10)
+        bound = bool(structured(call("get_browser_state", where)).get("target_id"))
+        message = (reply.get("refusal") or {}).get("message", "")[:120]
+        call("end_session", {"session": session})
+        front = sum(ms for who, ms in seen["front"] if "Chrome" in who)
+        top = sum(ms for who, ms in seen["top"] if "Chrome" in who)
+        results[arm].append(bound)
+        print(f"cycle {cycle} arm={arm} bound={bound} took={seen['took_s']}s chrome_front_ms={front} chrome_top_ms={top} keys={seen['keys']} {note} {message}")
+        dump_trace(f"cycle {cycle}")
+    lines = ["### first attach after a Chrome launch, build " + BUILD, "", "| arm | bound |", "|---|---|"]
+    lines += [f"| {arm} | {sum(seen)}/{len(seen)} |" for arm, seen in results.items()]
+    summary = "\n".join(lines)
+    print(summary)
+    with open(os.environ.get("GITHUB_STEP_SUMMARY", os.devnull), "a") as out:
+        out.write(summary + "\n")
 
 
 def main() -> None:
@@ -345,6 +399,10 @@ def main() -> None:
         dump_trace("prewarm")
         call("end_session", {"session": "prewarm"})
         time.sleep(5)
+    cycles = int(os.environ.get("AB_CYCLES", "0"))
+    if cycles:
+        first_attach_cycles(cycles, phase, front_host)
+        return
     rows = []
     for rep in range(1, REPS + 1):
         session = f"s{rep}"
