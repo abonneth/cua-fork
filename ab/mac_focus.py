@@ -124,8 +124,9 @@ def host_area() -> dict | None:
     if not window:
         return None
     target = {"pid": window["pid"], "window_id": window["window_id"], "session": "reader"}
-    elements = structured(call("get_window_state", target)).get("elements") or []
+    elements = structured(call("get_window_state", target | {"tree_format": "elements"})).get("elements") or []
     area = next((e for e in elements if "text" in str(e.get("role", "")).lower() and "area" in str(e.get("role", "")).lower()), None)
+    print("host:", json.dumps(area)[:300] if area else [e.get("role") for e in elements][:40])
     return {**target, "element_token": area["element_token"], "value": str(area.get("value") or "")} if area else None
 
 
@@ -203,7 +204,7 @@ def answer_local_network_prompt(timeout_s: float = 30) -> bool:
                 print("no prompt yet; apps:", sorted({str(w.get("app_name")) for w in windows}))
             if prompt:
                 target = {"pid": prompt["pid"], "window_id": prompt["window_id"], "session": "warmup"}
-                elements = structured(call("get_window_state", target)).get("elements") or []
+                elements = structured(call("get_window_state", target | {"tree_format": "elements"})).get("elements") or []
                 allow = next((e for e in elements if str(e.get("label", "")).strip() == "Allow"), None)
                 if allow:
                     print("local network prompt: clicking Allow", json.dumps(call("click", {**target, "element_token": allow["element_token"]}))[:300])
