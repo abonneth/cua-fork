@@ -303,7 +303,7 @@ def web_area_present(session: str) -> bool:
 
 
 def first_attach_cycles(cycles: int, phase, front_host) -> None:
-    arms = ["off", "walk", "walk_until_web"]
+    arms = os.environ.get("AB_ARMS", "off,walk,walk_until_web").split(",")
     offset = int(os.environ.get("AB_TRIAL", "0"))
     results: dict[str, list] = {arm: [] for arm in arms}
     for cycle in range(cycles):

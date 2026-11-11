@@ -18,7 +18,7 @@ jobs:
       fail-fast: false
       matrix:
         variant: [driver-enables-remote-debugging]
-        build: [H]
+        build: [H, J]
         typing: [on]
         prewarm: [off]
         trial: [1, 2, 3]
@@ -40,17 +40,18 @@ jobs:
             perl -0pi -e 's/fn guarded_attach_allowed\(window_on_current_space: Option<bool>\) -> bool \{\n    window_on_current_space == Some\(false\)\n\}/fn guarded_attach_allowed(_window_on_current_space: Option<bool>) -> bool {\n    true\n}/' "$macos/browser/platform.rs"
             git -C "$src" diff | grep -q "^+    true" || { echo "patch did not apply" >&2; exit 1; }
           fi
-          if [[ "$b" =~ ^[CDEGHI]$ ]]; then patch wait_for_ax_checkbox.pl "$macos/browser/setup_ui.rs"; fi
+          if [[ "$b" =~ ^[CDEGHIJ]$ ]]; then patch wait_for_ax_checkbox.pl "$macos/browser/setup_ui.rs"; fi
           if [[ "$b" == D ]]; then
             perl -pi -e 's/(EXISTING_PROFILE_SETUP_READY_TIMEOUT: Duration = Duration::from_secs\()12\)/${1}30)/' "$crates/cua-driver-core/src/browser/setup_descriptor.rs"
             git -C "$src" diff | grep -q "from_secs(30)" || { echo "timeout patch did not apply" >&2; exit 1; }
           fi
-          if [[ "$b" =~ ^[EGHI]$ ]]; then patch diagnose_not_ready.pl "$macos/browser/setup_ui.rs"; fi
-          if [[ "$b" =~ ^[GHI]$ ]]; then
+          if [[ "$b" =~ ^[EGHIJ]$ ]]; then patch diagnose_not_ready.pl "$macos/browser/setup_ui.rs"; fi
+          if [[ "$b" =~ ^[GHIJ]$ ]]; then
             patch trace.pl "$macos/browser/setup_ui.rs" setup
             patch trace.pl "$macos/ax/enablement.rs" enablement
           fi
-          if [[ "$b" == H ]]; then patch trace.pl "$macos/ax/bindings.rs" bindings; fi
+          if [[ "$b" == H || "$b" == J ]]; then patch trace.pl "$macos/ax/bindings.rs" bindings; fi
+          if [[ "$b" == J ]]; then patch refusal_backoff.pl "$macos/ax/enablement.rs"; fi
           if [[ "$b" == I ]]; then patch trace.pl "$macos/ax/bindings.rs" bindings-fallback; fi
           git -C "$src" diff --stat
           if [[ "$b" != A ]]; then
@@ -68,6 +69,7 @@ jobs:
           AB_PREWARM: ${{ matrix.prewarm }}
           AB_TRIAL: ${{ matrix.trial }}
           AB_CYCLES: "12"
+          AB_ARMS: "off"
         run: |
           set -euo pipefail
           script="$SRC/scripts/ci/macos/ab-run.sh"
@@ -91,5 +93,6 @@ jobs:
           name: mac-${{ matrix.variant }}-${{ matrix.build }}-prewarm-${{ matrix.prewarm }}-t${{ matrix.trial }}
           path: |
             ab/shots
+            /tmp/cua-ab-trace.log
             ${{ env.SRC }}/artifacts/cua-driver/macos-hosted-bootstrap
           if-no-files-found: ignore
