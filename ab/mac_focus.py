@@ -20,6 +20,7 @@ CHROME = "/Applications/Google Chrome.app"
 PROFILE = os.path.join(os.environ.get("RUNNER_TEMP", "/tmp"), "chrome-profile")
 HERE = os.path.dirname(os.path.abspath(__file__))
 SHOTS = os.path.join(HERE, "shots")
+TYPING = os.environ.get("AB_TYPING") == "on"
 
 
 def run(cmd: list[str], timeout: float = 60) -> subprocess.CompletedProcess:
@@ -76,6 +77,31 @@ class Watch:
 
     def activations(self, t0: float, t1: float) -> list[str]:
         return [w for t, k, w in list(self.events) if k == "active" and t0 < t < t1 and w != HOST]
+
+
+class Typist:
+    """A user typing x into the front app every 40 ms, through the HID event tap."""
+
+    def __init__(self) -> None:
+        self.sent = 0
+        self.proc = subprocess.Popen(["/tmp/typist", "0.04"], stdout=subprocess.PIPE, text=True)
+        self.thread = threading.Thread(target=self.count, daemon=True)
+        self.thread.start()
+
+    def count(self) -> None:
+        assert self.proc.stdout
+        for _ in self.proc.stdout:
+            self.sent += 1
+
+    def stop(self) -> int:
+        self.proc.terminate()
+        self.proc.wait(10)
+        self.thread.join(5)
+        return self.sent
+
+
+def host_xs() -> int:
+    return run(["osascript", "-e", 'tell application "TextEdit" to get text of document 1'], 15).stdout.count("x")
 
 
 def request(payload: dict) -> dict:
@@ -191,6 +217,10 @@ def main() -> None:
         handle.write("the user's document\n")
     prepare_profile()
     watch = Watch()
+    if TYPING:
+        built = run(["swiftc", "-O", os.path.join(HERE, "typist.swift"), "-o", "/tmp/typist"], 600)
+        if built.returncode != 0:
+            raise RuntimeError(f"swiftc typist failed: {built.stderr[-2000:]}")
     print("chrome version:", run(["defaults", "read", f"{CHROME}/Contents/Info", "CFBundleShortVersionString"]).stdout.strip())
 
     def front_host() -> bool:
@@ -204,18 +234,29 @@ def main() -> None:
         if rep == 2:
             for at in (1.5, 4.0):
                 threading.Timer(at, shot, args=(f"{VARIANT}-{BUILD}-{name}-{at}s.png",)).start()
+        before = host_xs() if TYPING else 0
+        typist = Typist() if TYPING else None
         out = fn()
         took = time.time() - t0
         time.sleep(SETTLE_S)
         t1 = time.time()
+        keys = None
+        if typist:
+            sent = typist.stop()
+            time.sleep(0.5)
+            keys = {"sent": sent, "lost": sent - (host_xs() - before)}
         return out, {
             "fronted": fronted,
+            "keys": keys,
             "took_s": round(took, 2),
             "front": watch.away("front", t0, t1),
             "top": watch.away("top", t0, t1),
             "activations": watch.activations(t0, t1),
         }
 
+    if TYPING:
+        _, control = phase(lambda: time.sleep(2), "control", 0)
+        print("control (typing, no driver call):", json.dumps(control))
     rows = []
     for rep in range(1, REPS + 1):
         session = f"s{rep}"
@@ -245,10 +286,10 @@ def main() -> None:
         rows.append(phases)
 
     lines = [
-        f"### {VARIANT} / build {BUILD}",
+        f"### {VARIANT} / build {BUILD} / typing {'on' if TYPING else 'off'}",
         "",
-        "| phase | reps Chrome took the front app | ms away (front app) | reps Chrome window on top | ms on top | median call s |",
-        "|---|---|---|---|---|---|",
+        "| phase | reps Chrome took the front app | ms away (front app) | reps Chrome window on top | ms on top | median call s | keys lost/sent |",
+        "|---|---|---|---|---|---|---|",
     ]
     for name in ("attach_background", "attach_foreground", "act", "end_session"):
         seen = [r[name] for r in rows if name in r]
@@ -257,8 +298,9 @@ def main() -> None:
         front = [sum(ms for w, ms in s["front"] if "Chrome" in w) for s in seen]
         top = [sum(ms for w, ms in s["top"] if "Chrome" in w) for s in seen]
         took = sorted(s["took_s"] for s in seen)[len(seen) // 2]
+        keys = [f"{s['keys']['lost']}/{s['keys']['sent']}" for s in seen if s.get("keys")]
         lines.append(
-            f"| {name} | {sum(1 for f in front if f)}/{len(seen)} | {front} | {sum(1 for t in top if t)}/{len(seen)} | {top} | {took} |"
+            f"| {name} | {sum(1 for f in front if f)}/{len(seen)} | {front} | {sum(1 for t in top if t)}/{len(seen)} | {top} | {took} | {', '.join(keys) or '-'} |"
         )
     summary = "\n".join(lines)
     print(summary)

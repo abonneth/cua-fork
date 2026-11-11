@@ -19,6 +19,7 @@ jobs:
       matrix:
         variant: [driver-enables-remote-debugging, remote-debugging-already-on]
         build: [A, B]
+        typing: [on]
     steps:
       - uses: actions/checkout@v4
       - name: Tools
@@ -44,6 +45,7 @@ jobs:
           AB_PROBE: ${{ github.workspace }}/ab/mac_focus.py
           AB_VARIANT: ${{ matrix.variant }}
           AB_BUILD: ${{ matrix.build }}
+          AB_TYPING: ${{ matrix.typing }}
         run: |
           set -euo pipefail
           script="$SRC/scripts/ci/macos/ab-run.sh"
@@ -64,7 +66,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: mac-${{ matrix.variant }}-${{ matrix.build }}
+          name: mac-${{ matrix.variant }}-${{ matrix.build }}-typing-${{ matrix.typing }}
           path: |
             ab/shots
             ${{ env.SRC }}/artifacts/cua-driver/macos-hosted-bootstrap
