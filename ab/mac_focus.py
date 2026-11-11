@@ -280,9 +280,9 @@ def main() -> None:
         fronted = front_host()
         before = host_xs() if TYPING else 0
         t0 = time.time()
-        if rep == 2:
-            for at in (1.5, 4.0):
-                threading.Timer(at, shot, args=(f"{VARIANT}-{BUILD}-{name}-{at}s.png",)).start()
+        if rep <= 2:
+            for at in (1.5, 4.0, 8.0, 11.0):
+                threading.Timer(at, shot, args=(f"{VARIANT}-{BUILD}-{name}-r{rep}-{at}s.png",)).start()
         typist = Typist() if TYPING else None
         out = fn()
         took = time.time() - t0
@@ -323,6 +323,8 @@ def main() -> None:
         if not bound and rep == 1:
             shot(f"unbound-{VARIANT}-{BUILD}.png")
             print("prepare reply:", json.dumps(reply)[:2000])
+            tree = structured(call("get_window_state", {**where, "session": "reader", "tree_format": "elements"})).get("elements") or []
+            print("chrome tree after refusal:", [(e.get("role"), str(e.get("label") or "")[:40]) for e in tree][:80])
         tab = next((t["tab_id"] for t in state.get("tabs", []) if t.get("active")), None)
         if tab:
             _, phases["act"] = phase(lambda: call("browser_navigate", {**where, "target_id": state["target_id"], "tab_id": tab, "url": f"https://example.com/?rep={rep}"}), "act", rep)
