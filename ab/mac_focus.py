@@ -100,8 +100,44 @@ class Typist:
         return self.sent
 
 
+TCC_DB = "/Library/Application Support/com.apple.TCC/TCC.db"
+
+
+def grant_typist() -> None:
+    rows = ",".join(
+        f"('{service}','{client}',1,2,2,1,NULL,0,0,'UNUSED',NULL,strftime('%s','now'))"
+        for service in ("kTCCServiceAccessibility", "kTCCServicePostEvent")
+        for client in ("/tmp/typist", os.path.realpath(sys.executable))
+    )
+    sql = (
+        "INSERT OR REPLACE INTO access(service,client,client_type,auth_value,auth_reason,auth_version,csreq,flags,"
+        f"indirect_object_identifier_type,indirect_object_identifier,indirect_object_code_identity,last_modified) VALUES {rows};"
+    )
+    print("tcc:", run(["sudo", "-n", "/usr/bin/sqlite3", "-cmd", ".timeout 30000", TCC_DB, sql]).returncode)
+    run(["sudo", "-n", "/usr/bin/killall", "tccd"])
+    time.sleep(2)
+
+
+def host_area() -> dict | None:
+    windows = structured(call("list_windows", {"on_screen_only": True})).get("windows", [])
+    window = next((w for w in windows if w.get("app_name") == HOST and "ab-host" in str(w.get("title"))), None)
+    if not window:
+        return None
+    target = {"pid": window["pid"], "window_id": window["window_id"], "session": "reader"}
+    elements = structured(call("get_window_state", target)).get("elements") or []
+    area = next((e for e in elements if "text" in str(e.get("role", "")).lower() and "area" in str(e.get("role", "")).lower()), None)
+    return {**target, "element_token": area["element_token"], "value": str(area.get("value") or "")} if area else None
+
+
 def host_xs() -> int:
-    return run(["osascript", "-e", 'tell application "TextEdit" to get text of document 1'], 15).stdout.count("x")
+    area = host_area()
+    return area["value"].count("x") if area else -1
+
+
+def clear_host() -> None:
+    area = host_area()
+    if area:
+        call("set_value", {k: v for k, v in area.items() if k != "value"} | {"value": "the user's document "})
 
 
 def request(payload: dict) -> dict:
@@ -228,6 +264,8 @@ def main() -> None:
         built = run(["swiftc", "-O", os.path.join(HERE, "typist.swift"), "-o", "/tmp/typist"], 600)
         if built.returncode != 0:
             raise RuntimeError(f"swiftc typist failed: {built.stderr[-2000:]}")
+        grant_typist()
+        call("start_session", {"session": "reader"})
     print("chrome version:", run(["defaults", "read", f"{CHROME}/Contents/Info", "CFBundleShortVersionString"]).stdout.strip())
 
     def front_host() -> bool:
@@ -236,12 +274,14 @@ def main() -> None:
         return watch.current("front") == HOST
 
     def phase(fn, name, rep):
+        if TYPING:
+            clear_host()
         fronted = front_host()
+        before = host_xs() if TYPING else 0
         t0 = time.time()
         if rep == 2:
             for at in (1.5, 4.0):
                 threading.Timer(at, shot, args=(f"{VARIANT}-{BUILD}-{name}-{at}s.png",)).start()
-        before = host_xs() if TYPING else 0
         typist = Typist() if TYPING else None
         out = fn()
         took = time.time() - t0
