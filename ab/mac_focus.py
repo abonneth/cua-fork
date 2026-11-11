@@ -17,7 +17,7 @@ SETTLE_S = 1.5
 HOST = "TextEdit"
 HOST_FILE = "/tmp/ab-host.txt"
 CHROME = "/Applications/Google Chrome.app"
-PROFILE = os.path.expanduser("~/Library/Application Support/Google/Chrome")
+PROFILE = os.path.join(os.environ.get("RUNNER_TEMP", "/tmp"), "chrome-profile")
 HERE = os.path.dirname(os.path.abspath(__file__))
 SHOTS = os.path.join(HERE, "shots")
 
@@ -108,7 +108,15 @@ def shot(name: str) -> None:
 
 
 def launch_chrome(url: str) -> None:
-    run(["open", "-na", CHROME, "--args", "--no-first-run", "--no-default-browser-check", url])
+    print("step: launch chrome", url)
+    args = [f"--user-data-dir={PROFILE}", "--no-first-run", "--no-default-browser-check", "--disable-features=MediaRouter", url]
+    subprocess.Popen(
+        [f"{CHROME}/Contents/MacOS/Google Chrome", *args],
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
 
 
 def edit_json(path: str, edit) -> None:
@@ -126,6 +134,9 @@ def prepare_profile() -> None:
         if os.path.exists(local_state) and os.path.exists(os.path.join(PROFILE, "Default", "Preferences")):
             break
         time.sleep(1)
+    else:
+        shot("chrome-never-started.png")
+        raise RuntimeError("Chrome never created its profile")
     time.sleep(5)
     run(["pkill", "-x", "Google Chrome"])
     time.sleep(4)
@@ -158,7 +169,7 @@ def main() -> None:
     print("chrome version:", run(["defaults", "read", f"{CHROME}/Contents/Info", "CFBundleShortVersionString"]).stdout.strip())
 
     def front_host() -> bool:
-        run(["open", "-a", HOST, HOST_FILE])
+        run(["open", "-a", HOST, HOST_FILE], 15)
         time.sleep(1.0)
         return watch.current("front") == HOST
 
