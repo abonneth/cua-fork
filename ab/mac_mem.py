@@ -111,9 +111,6 @@ def target_window() -> tuple[int, int, str] | None:
         note = WORK / "note.txt"
         note.write_text("memory probe\n" * 40)
         subprocess.run(["open", "-a", app, str(note)], check=False)
-        time.sleep(3)
-        grow = 'tell application "TextEdit" to set bounds of front window to {0, 30, 1800, 1050}'
-        subprocess.run(["osascript", "-e", grow], capture_output=True, timeout=30, check=False)
     deadline = time.monotonic() + 30
     windows = []
     while time.monotonic() < deadline:
@@ -144,59 +141,65 @@ def main() -> int:
     deadline = time.monotonic() + 60
     while time.monotonic() < deadline and not Path(SOCK).exists():
         time.sleep(0.2)
-    print(f"[{LABEL}] daemon pid {daemon.pid} flags {' '.join(flags)}", flush=True)
-    ok, text, _ = call("check_permissions")
-    print(f"[{LABEL}] permissions: {' '.join(text.split())[:300]}", flush=True)
-    shot = str(WORK / "shot.png")
-    rows = [report(daemon.pid, "start")]
-    ok, text, elapsed = call("get_desktop_state", {"screenshot_out_file": shot})
-    print(f"[{LABEL}] first get_desktop_state ok={ok} {elapsed:.0f} ms {' '.join(text.split())[:260]}", flush=True)
-    if Path(shot).exists():
-        size = subprocess.run(["sips", "-g", "pixelWidth", "-g", "pixelHeight", shot], capture_output=True, text=True)
-        print(f"[{LABEL}] screenshot {' '.join(size.stdout.split()[1:])}", flush=True)
-    rows.append(report(daemon.pid, "after the first get_desktop_state"))
-    for _ in range(2):
-        rows.append(phase(daemon.pid, "get_desktop_state", "get_desktop_state", {"screenshot_out_file": shot}, N))
-    time.sleep(20)
-    rows.append(report(daemon.pid, "idle 20 s"))
-    target = target_window()
-    if target is None:
-        print(f"[{LABEL}] no window to capture", flush=True)
-    else:
-        args = {"pid": target[0], "window_id": target[1], "screenshot_out_file": str(WORK / "window.png")}
-        rows.append(phase(daemon.pid, f"get_window_state {target[2]}", "get_window_state", args, N))
-        rows.append(phase(daemon.pid, "get_desktop_state", "get_desktop_state", {"screenshot_out_file": shot}, 5))
-    keep = os.environ.get("AB_SHOTS")
-    if keep:
-        Path(keep).mkdir(parents=True, exist_ok=True)
-        for name in ("shot.png", "window.png"):
-            if (WORK / name).exists():
-                (Path(keep) / f"{LABEL}-{name}").write_bytes((WORK / name).read_bytes())
-    alive = daemon.poll() is None
-    print(f"[{LABEL}] daemon alive at the end: {alive}", flush=True)
-    desktop = [row for row in rows if row["label"].startswith(f"{N}x get_desktop_state")]
-    peak = max(row["footprint_mb"] for row in rows)
-    summary = {
-        "label": LABEL,
-        "overlay": OVERLAY,
-        "calls": 2 * N,
-        "failures": sum(row["failures"] for row in desktop),
-        "cgimage_before": rows[1]["CGImage"],
-        "cgimage_after": desktop[-1]["CGImage"],
-        "footprint_before_mb": rows[1]["footprint_mb"],
-        "footprint_after_mb": desktop[-1]["footprint_mb"],
-        "footprint_end_mb": rows[-1]["footprint_mb"],
-        "footprint_peak_mb": peak,
-        "unpurgeable_cg_copies_end": stuck(daemon.pid),
-        "p50_ms": statistics.median([t for row in desktop for t in row["times_ms"]] or [0]),
-    }
-    print(f"[{LABEL}] SUMMARY {json.dumps(summary)}", flush=True)
-    daemon.terminate()
     try:
-        daemon.wait(timeout=10)
-    except subprocess.TimeoutExpired:
-        daemon.kill()
-    print((WORK / "serve.log").read_text()[-1500:], flush=True)
+        print(f"[{LABEL}] daemon pid {daemon.pid} flags {' '.join(flags)}", flush=True)
+        ok, text, _ = call("check_permissions")
+        print(f"[{LABEL}] permissions: {' '.join(text.split())[:300]}", flush=True)
+        shot = str(WORK / "shot.png")
+        rows = [report(daemon.pid, "start")]
+        ok, text, elapsed = call("get_desktop_state", {"screenshot_out_file": shot})
+        print(f"[{LABEL}] first get_desktop_state ok={ok} {elapsed:.0f} ms {' '.join(text.split())[:260]}", flush=True)
+        if Path(shot).exists():
+            size = subprocess.run(["sips", "-g", "pixelWidth", "-g", "pixelHeight", shot], capture_output=True, text=True)
+            print(f"[{LABEL}] screenshot {' '.join(size.stdout.split()[1:])}", flush=True)
+        rows.append(report(daemon.pid, "after the first get_desktop_state"))
+        for _ in range(2):
+            rows.append(phase(daemon.pid, "get_desktop_state", "get_desktop_state", {"screenshot_out_file": shot}, N))
+        time.sleep(20)
+        rows.append(report(daemon.pid, "idle 20 s"))
+        target = target_window()
+        if target is None:
+            print(f"[{LABEL}] no window to capture", flush=True)
+        else:
+            args = {"pid": target[0], "window_id": target[1], "screenshot_out_file": str(WORK / "window.png")}
+            rows.append(phase(daemon.pid, f"get_window_state {target[2]}", "get_window_state", args, N))
+            rows.append(phase(daemon.pid, "get_desktop_state", "get_desktop_state", {"screenshot_out_file": shot}, 5))
+        keep = os.environ.get("AB_SHOTS")
+        if keep:
+            Path(keep).mkdir(parents=True, exist_ok=True)
+            for name in ("shot.png", "window.png"):
+                if (WORK / name).exists():
+                    (Path(keep) / f"{LABEL}-{name}").write_bytes((WORK / name).read_bytes())
+        alive = daemon.poll() is None
+        print(f"[{LABEL}] daemon alive at the end: {alive}", flush=True)
+        desktop = [row for row in rows if row["label"].startswith(f"{N}x get_desktop_state")]
+        peak = max(row["footprint_mb"] for row in rows)
+        summary = {
+            "label": LABEL,
+            "overlay": OVERLAY,
+            "calls": 2 * N,
+            "failures": sum(row["failures"] for row in desktop),
+            "cgimage_before": rows[1]["CGImage"],
+            "cgimage_after": desktop[-1]["CGImage"],
+            "footprint_before_mb": rows[1]["footprint_mb"],
+            "footprint_after_mb": desktop[-1]["footprint_mb"],
+            "footprint_end_mb": rows[-1]["footprint_mb"],
+            "footprint_peak_mb": peak,
+            "unpurgeable_cg_copies_end": stuck(daemon.pid),
+            "p50_ms": statistics.median([t for row in desktop for t in row["times_ms"]] or [0]),
+        }
+        print(f"[{LABEL}] SUMMARY {json.dumps(summary)}", flush=True)
+    finally:
+        if os.environ.get("AB_LEAVE") == "1" and daemon.poll() is None:
+            print(f"[{LABEL}] daemon {daemon.pid} left running", flush=True)
+        else:
+            daemon.terminate()
+            try:
+                daemon.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                daemon.kill()
+            print(f"[{LABEL}] daemon exit status {daemon.returncode}", flush=True)
+        print((WORK / "serve.log").read_text()[-1500:], flush=True)
     return 0
 
 
