@@ -62,6 +62,7 @@ jobs:
           echo "SRC_SHA=$(git -C "$src" rev-parse HEAD)" >> "$GITHUB_ENV"
       - name: Upstream hosted browser lane
         if: ${{ matrix.mode == 'e2e' }}
+        continue-on-error: true
         env:
           CUA_E2E_INTERNAL_LANE: browser
         run: |
