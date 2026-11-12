@@ -7,8 +7,8 @@ on:
 
 env:
   SHA_A: e3b909029d8dc0d5a0c7269b3fac378eddb01e10
-  SHA_Q: b831d68271faf9bb86970af83bd3839611b24398
-  SHA_F: 66a24ecd2f77df509a88a1fab37c04ffb2b3cd9b
+  SHA_Q: 2d712d9889ad6c67dc194bbfcd2498124112b1bb
+  SHA_F: 95567325cef9856400ebc96400c675a59f2f9f88
   CUA_E2E_RETRY_ONCE: "1"
   CUA_TELEMETRY: "0"
   DO_NOT_TRACK: "1"
@@ -22,11 +22,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { build: A, mode: probe, arms: reps, cycles: "0", reps: "on", frames: "on", trial: 1 }
-          - { build: A, mode: probe, arms: reps, cycles: "0", reps: "on", frames: "on", trial: 2 }
-          - { build: F, mode: probe, arms: reps, cycles: "0", reps: "on", frames: "on", trial: 1 }
-          - { build: F, mode: probe, arms: reps, cycles: "0", reps: "on", frames: "on", trial: 2 }
-          - { build: F, mode: probe, arms: reps, cycles: "0", reps: "on", frames: "on", trial: 3 }
+          - { build: Q, mode: e2e, arms: lane, trial: 1 }
+          - { build: F, mode: e2e, arms: lane, trial: 1 }
     steps:
       - uses: actions/checkout@v4
       - name: Tools
@@ -44,13 +41,6 @@ jobs:
           git -C "$src" fetch --quiet https://github.com/abonneth/cua-fork "$sha" || git -C "$src" fetch --quiet origin "$sha"
           git -C "$src" checkout --quiet --force "$sha"
           [[ "$(git -C "$src" rev-parse HEAD)" == "$sha" ]]
-          if [[ "${{ matrix.mode }}" == e2e ]]; then
-            runner="$src/scripts/ci/run-rust-standalone-browser-e2e.sh"
-            perl -pi -e 's/tests\+=\(standalone_browser_native_omnibox_select_all\)/tests+=(standalone_browser_native_omnibox_select_all standalone_browser_generic_type_text_completion standalone_browser_web_type_text_verification)/' "$runner"
-            git -C "$src" diff --stat
-            git -C "$src" diff --quiet && { echo "e2e rows were not added" >&2; exit 1; }
-            git -C "$src" -c user.name=ab -c user.email=ab@example.com commit -qam "ab: run the two rows allowlisted for trycua/cua#4126"
-          fi
           echo "tested source: $sha (+$(git -C "$src" rev-list --count "$sha"..HEAD) harness commit)"
           echo "SRC=$src" >> "$GITHUB_ENV"
           echo "SRC_SHA=$(git -C "$src" rev-parse HEAD)" >> "$GITHUB_ENV"
