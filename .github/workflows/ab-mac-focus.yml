@@ -25,9 +25,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { build: B, mode: checks, arms: intel, trial: 1, checks: "on", os: macos-15-intel }
-          - { build: F, mode: probe, arms: rounds, cycles: "0", reps: "on", rounds: "20", trial: 3, os: macos-15-intel }
-          - { build: G, mode: probe, arms: rounds, cycles: "0", reps: "on", rounds: "20", trial: 3, os: macos-15-intel }
+          - { build: F, mode: probe, arms: rounds, cycles: "0", reps: "on", rounds: "20", trial: 3, os: macos-26-intel }
+          - { build: G, mode: probe, arms: rounds, cycles: "0", reps: "on", rounds: "20", trial: 3, os: macos-26-intel }
           - { build: F, mode: probe, arms: rounds, cycles: "0", reps: "on", rounds: "20", trial: 1 }
           - { build: G, mode: probe, arms: rounds, cycles: "0", reps: "on", rounds: "20", trial: 1 }
           - { build: P, mode: e2e, arms: lane, trial: 1 }
