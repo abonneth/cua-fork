@@ -144,7 +144,11 @@ else
   )
   if [[ "${HOST_OS}" == Darwin ]]; then
     # macOS-only native-chrome keyboard regressions.
-    tests+=(standalone_browser_native_omnibox_select_all)
+    tests+=(
+      standalone_browser_native_omnibox_select_all
+      standalone_browser_generic_type_text_completion
+      standalone_browser_web_type_text_verification
+    )
   fi
 fi
 # shellcheck source=lib/e2e-retry-once.sh
