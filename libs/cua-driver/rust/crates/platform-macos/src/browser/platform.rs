@@ -826,6 +826,105 @@ async fn active_port_endpoint_with_relative_fallback(
     }))
 }
 
+/// How long a new listener waits for its DevToolsActivePort file. Chrome
+/// writes the file just after it starts listening, and a later bind compares
+/// the approved endpoint with it.
+const ACTIVE_PORT_FILE_GRACE: Duration = Duration::from_millis(500);
+
+/// The DevToolsActivePort endpoint of `pid`, awaited for up to `grace`.
+async fn active_port_endpoint_within(
+    pid: i64,
+    product: BrowserProduct,
+    grace: Duration,
+) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
+    let deadline = std::time::Instant::now() + grace;
+    loop {
+        if let Some(endpoint) = active_port_endpoint(pid, product).await? {
+            return Ok(Some(endpoint));
+        }
+        if std::time::Instant::now() >= deadline {
+            return Ok(None);
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+/// The endpoint `pid` opened after the approved setup action.
+async fn setup_endpoint(
+    pid: i64,
+    browser: BrowserProduct,
+    product_name: &str,
+    listeners_before: &[u16],
+) -> Result<OwnedEndpoint, BrowserRefusal> {
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        if let Some(endpoint) = active_port_endpoint(pid, browser).await? {
+            return Ok(endpoint);
+        }
+        let ports = loopback_ports_for_pid(pid).await?;
+        let mut endpoints = Vec::new();
+        for port in &ports {
+            if let Some(ws_url) = browser_websocket_url(*port).await {
+                endpoints.push((*port, ws_url, "lsof owner plus /json/version"));
+            }
+        }
+        if endpoints.is_empty() {
+            let correlated = ports
+                .iter()
+                .copied()
+                .filter(|port| !listeners_before.contains(port))
+                .collect::<Vec<_>>();
+            if let [port] = correlated.as_slice() {
+                if let Some(endpoint) =
+                    active_port_endpoint_within(pid, browser, ACTIVE_PORT_FILE_GRACE).await?
+                {
+                    return Ok(endpoint);
+                }
+                endpoints.push((
+                    *port,
+                    format!("ws://127.0.0.1:{port}/devtools/browser"),
+                    "new PID-owned listener correlated with exact approved setup",
+                ));
+            } else if correlated.len() > 1 {
+                return Err(BrowserRefusal::new(
+                    BrowserRefusalCode::BrowserBindingAmbiguous,
+                    format!("{product_name} exposed multiple newly correlated PID-owned listeners"),
+                ));
+            }
+        }
+        match endpoints.as_slice() {
+            [(port, ws_url, detail)] => {
+                return Ok(OwnedEndpoint {
+                    ws_url: ws_url.clone(),
+                    http_port: Some(*port),
+                    transport: EndpointTransport::LegacyJsonVersion,
+                    ownership: EndpointOwnershipProof {
+                        method: EndpointOwnershipMethod::ListeningSocketPid,
+                        owner_pid: pid,
+                        listener_pid: None,
+                        detail: Some((*detail).to_owned()),
+                    },
+                })
+            }
+            [] if std::time::Instant::now() < deadline => {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            [] => {
+                return Err(BrowserRefusal::new(
+                    BrowserRefusalCode::BrowserRequiresSetup,
+                    format!("{product_name} did not expose a uniquely PID-owned loopback endpoint after the exact setup action"),
+                ))
+            }
+            _ => {
+                return Err(BrowserRefusal::new(
+                    BrowserRefusalCode::BrowserBindingAmbiguous,
+                    format!("{product_name} exposed multiple PID-owned endpoint candidates after the exact setup action"),
+                ))
+            }
+        }
+    }
+}
+
 async fn browser_websocket_url(port: u16) -> Option<String> {
     let url = fetch_json_version_ws_url(port).await?;
     (loopback_websocket_port(&url) == Some(port)).then_some(url)
@@ -1228,82 +1327,13 @@ impl BrowserPlatform for MacOsBrowserPlatform {
         let foregrounded_window = handle.foregrounded_window;
         let injected_global_input = handle.injected_global_input;
 
-        let deadline = std::time::Instant::now() + Duration::from_secs(5);
-        let endpoint_result = loop {
-            match active_port_endpoint(request.pid, request.browser).await {
-                Ok(Some(endpoint)) => break Ok(endpoint),
-                Ok(None) => {}
-                Err(error) => break Err(error),
-            }
-            let ports = match loopback_ports_for_pid(request.pid).await {
-                Ok(ports) => ports,
-                Err(error) => break Err(error),
-            };
-            let mut endpoints = Vec::new();
-            for port in &ports {
-                if let Some(ws_url) = browser_websocket_url(*port).await {
-                    endpoints.push((*port, ws_url, "lsof owner plus /json/version"));
-                }
-            }
-            if endpoints.is_empty() {
-                let correlated = ports
-                    .iter()
-                    .copied()
-                    .filter(|port| !listeners_before.contains(port))
-                    .collect::<Vec<_>>();
-                if let [port] = correlated.as_slice() {
-                    endpoints.push((
-                        *port,
-                        format!("ws://127.0.0.1:{port}/devtools/browser"),
-                        "new PID-owned listener correlated with exact approved setup",
-                    ));
-                } else if correlated.len() > 1 {
-                    break Err(BrowserRefusal::new(
-                        BrowserRefusalCode::BrowserBindingAmbiguous,
-                        format!(
-                            "{} exposed multiple newly correlated PID-owned listeners",
-                            descriptor.product_name
-                        ),
-                    ));
-                }
-            }
-            match endpoints.as_slice() {
-                [(port, ws_url, detail)] => {
-                    break Ok(OwnedEndpoint {
-                        ws_url: ws_url.clone(),
-                        http_port: Some(*port),
-                        transport: EndpointTransport::LegacyJsonVersion,
-                        ownership: EndpointOwnershipProof {
-                            method: EndpointOwnershipMethod::ListeningSocketPid,
-                            owner_pid: request.pid,
-                            listener_pid: None,
-                            detail: Some((*detail).to_owned()),
-                        },
-                    })
-                }
-                [] if std::time::Instant::now() < deadline => {
-                    tokio::time::sleep(Duration::from_millis(100)).await;
-                }
-                [] => {
-                    break Err(BrowserRefusal::new(
-                        BrowserRefusalCode::BrowserRequiresSetup,
-                        format!(
-                            "{} did not expose a uniquely PID-owned loopback endpoint after the exact setup action",
-                            descriptor.product_name
-                        ),
-                    ))
-                }
-                _ => {
-                    break Err(BrowserRefusal::new(
-                        BrowserRefusalCode::BrowserBindingAmbiguous,
-                        format!(
-                            "{} exposed multiple PID-owned endpoint candidates after the exact setup action",
-                            descriptor.product_name
-                        ),
-                    ))
-                }
-            }
-        };
+        let endpoint_result = setup_endpoint(
+            request.pid,
+            request.browser,
+            descriptor.product_name,
+            &listeners_before,
+        )
+        .await;
         let endpoint = match endpoint_result {
             Ok(endpoint) => endpoint,
             Err(error) => {
@@ -1913,7 +1943,7 @@ mod tests {
         let unrelated = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         match case {
             "missing_file" | "non_loopback" | "wrong_port" | "multiple" | "one_valid"
-            | "no_valid" => std::fs::remove_file(&active_port).unwrap(),
+            | "no_valid" | "late_file" => std::fs::remove_file(&active_port).unwrap(),
             "malformed" => std::fs::write(&active_port, "not-a-port\n").unwrap(),
             "unreadable" => {
                 std::fs::remove_file(&active_port).unwrap();
@@ -2028,7 +2058,7 @@ mod tests {
                 }
                 _ => urls[index].clone(),
             };
-            let body = if case == "no_valid" {
+            let body = if matches!(case, "no_valid" | "late_file") {
                 "{}".to_owned()
             } else {
                 serde_json::json!({"webSocketDebuggerUrl": url}).to_string()
@@ -2053,7 +2083,7 @@ mod tests {
         let endpoint = platform.discover_owned_endpoint(pid).await;
         let expected_counts = match case {
             "absolute" | "conflicting" | "malformed" | "unreadable" => [0, 0, 0],
-            "non_loopback" | "wrong_port" | "no_valid" => [1, 1, 1],
+            "non_loopback" | "wrong_port" | "no_valid" | "late_file" => [1, 1, 1],
             "one_valid" => [1, 1, 0],
             _ => [1, 0, 0],
         };
@@ -2076,7 +2106,7 @@ mod tests {
                 );
                 assert_eq!(take_counts(), [0, 0, 0]);
             }
-            "non_loopback" | "wrong_port" | "no_valid" => {
+            "non_loopback" | "wrong_port" | "no_valid" | "late_file" => {
                 assert!(endpoint.unwrap().is_none());
                 assert!(platform
                     .discover_existing_profile_endpoint(pid)
@@ -2193,6 +2223,38 @@ mod tests {
                 );
                 assert_eq!(take_counts(), [1, 1, 1]);
             }
+            "late_file" => {
+                let before = [ports[0], ports[2]];
+                let chrome = BrowserProduct::GoogleChrome;
+                let bare = setup_endpoint(pid, chrome, "Chrome", &before)
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    bare.ws_url,
+                    format!("ws://127.0.0.1:{}/devtools/browser", ports[1])
+                );
+                let port = ports[1];
+                let written = tokio::spawn(async move {
+                    tokio::time::sleep(ACTIVE_PORT_FILE_GRACE / 2).await;
+                    let text = format!("{port}\n/devtools/browser/endpoint-1\n");
+                    std::fs::write(active_port, text).unwrap();
+                });
+                let approved = setup_endpoint(pid, chrome, "Chrome", &before)
+                    .await
+                    .unwrap();
+                written.await.unwrap();
+                assert_eq!(approved.ws_url, urls[1]);
+                assert_eq!(
+                    platform
+                        .reprove_existing_profile_endpoint(pid, &approved.ws_url)
+                        .await
+                        .unwrap()
+                        .unwrap()
+                        .ws_url,
+                    urls[1],
+                    "the bind after an attach must find the endpoint the setup approved"
+                );
+            }
             _ => {}
         }
         for server in servers {
@@ -2228,6 +2290,11 @@ mod tests {
     async fn owned_discovery_rejects_non_loopback_fallback() {
         assert_owned_discovery_profile_case("non_loopback").await;
         assert_owned_discovery_profile_case("wrong_port").await;
+    }
+
+    #[tokio::test]
+    async fn setup_approves_the_port_file_a_new_listener_writes_just_after_listening() {
+        assert_owned_discovery_profile_case("late_file").await;
     }
 
     #[tokio::test]
