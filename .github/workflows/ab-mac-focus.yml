@@ -11,6 +11,7 @@ env:
   SHA_F: ec1252c0ad4817a2cce8196e2b56aad7547f4284
   SHA_G: dcabe885671173e6217bb992968021899d3f9f2d
   SHA_P: 6e857c8655f45d73d8f814b180db6784a7ba508e
+  SHA_B: 36c576698e7265a84fb3469c8b9d2c9824df6931
   CUA_E2E_RETRY_ONCE: "1"
   CUA_TELEMETRY: "0"
   DO_NOT_TRACK: "1"
@@ -24,7 +25,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { build: P, mode: checks, arms: intel, trial: 1, checks: "on", failbefore: "on", os: macos-15-intel }
+          - { build: B, mode: checks, arms: intel, trial: 1, checks: "on", os: macos-15-intel }
+          - { build: F, mode: probe, arms: rounds, cycles: "0", reps: "on", rounds: "20", trial: 3, os: macos-15-intel }
+          - { build: G, mode: probe, arms: rounds, cycles: "0", reps: "on", rounds: "20", trial: 3, os: macos-15-intel }
+          - { build: F, mode: probe, arms: rounds, cycles: "0", reps: "on", rounds: "20", trial: 1 }
+          - { build: G, mode: probe, arms: rounds, cycles: "0", reps: "on", rounds: "20", trial: 1 }
+          - { build: P, mode: e2e, arms: lane, trial: 1 }
     steps:
       - uses: actions/checkout@v4
       - name: Tools
@@ -39,6 +45,7 @@ jobs:
             F) sha="$SHA_F" ;;
             G) sha="$SHA_G" ;;
             P) sha="$SHA_P" ;;
+            B) sha="$SHA_B" ;;
           esac
           git clone --quiet --filter=blob:none --no-checkout https://github.com/trycua/cua "$src"
           git -C "$src" fetch --quiet https://github.com/abonneth/cua-fork "$sha" || git -C "$src" fetch --quiet origin "$sha"
