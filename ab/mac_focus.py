@@ -531,6 +531,14 @@ def main() -> None:
         effects = reply.get("side_effects") or (reply.get("detail") or {}).get("setup_side_effects") or {}
         state = structured(call("get_browser_state", where))
         bound = bool(state.get("target_id"))
+        if not bound:
+            print(f"unbound rep {rep} bind reply:", json.dumps(state)[:6000])
+            for wait in (1, 3):
+                time.sleep(wait)
+                again = structured(call("get_browser_state", where))
+                print(f"unbound rep {rep} bind again after {wait}s:", json.dumps(again)[:3000])
+                if again.get("target_id"):
+                    break
         if not bound and rep == 1:
             shot(f"unbound-{VARIANT}-{BUILD}.png")
             print("prepare reply:", json.dumps(reply)[:8000])

@@ -22,13 +22,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { build: F, mode: e2e, arms: lane, trial: 1 }
-          - { build: F, mode: checks, arms: none, trial: 1, checks: "on" }
-          - { build: F, mode: probe, arms: "minimized,hidden", frames: "on", trial: 1 }
-          - { build: A, mode: probe, arms: "minimized,hidden", frames: "on", trial: 1 }
-          - { build: F, mode: probe, arms: "off", frames: "on", trial: 1 }
-          - { build: F, mode: probe, arms: "off", frames: "on", trial: 2 }
-          - { build: F, mode: probe, arms: reps, cycles: "0", reps: "on", frames: "on", trial: 1 }
+          - { build: F, mode: probe, arms: reps, cycles: "0", reps: "on", frames: "on", trial: 2 }
+          - { build: F, mode: probe, arms: reps, cycles: "0", reps: "on", frames: "on", trial: 3 }
+          - { build: F, mode: probe, arms: reps, cycles: "0", reps: "on", frames: "on", trial: 4 }
+          - { build: F, mode: probe, arms: reps, cycles: "0", reps: "on", frames: "on", trial: 5 }
     steps:
       - uses: actions/checkout@v4
       - name: Tools
