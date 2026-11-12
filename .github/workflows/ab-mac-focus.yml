@@ -18,18 +18,13 @@ env:
 jobs:
   focus:
     name: ${{ matrix.build }} ${{ matrix.mode }} ${{ matrix.arms }} t${{ matrix.trial }}
-    runs-on: macos-26
+    runs-on: ${{ matrix.os || 'macos-26' }}
     timeout-minutes: ${{ matrix.mode == 'e2e' && 200 || 120 }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { build: P, mode: checks, arms: none, trial: 1, checks: "on", failbefore: "on" }
-          - { build: F, mode: probe, arms: rounds, cycles: "0", reps: "on", rounds: "20", trial: 1 }
-          - { build: G, mode: probe, arms: rounds, cycles: "0", reps: "on", rounds: "20", trial: 1 }
-          - { build: F, mode: probe, arms: rounds, cycles: "0", reps: "on", rounds: "20", trial: 2 }
-          - { build: G, mode: probe, arms: rounds, cycles: "0", reps: "on", rounds: "20", trial: 2 }
-          - { build: P, mode: e2e, arms: lane, trial: 1 }
+          - { build: P, mode: checks, arms: intel, trial: 1, checks: "on", failbefore: "on", os: macos-15-intel }
     steps:
       - uses: actions/checkout@v4
       - name: Tools
