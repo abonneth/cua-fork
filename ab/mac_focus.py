@@ -430,7 +430,7 @@ def first_attach_cycles(cycles: int, phase, front_host) -> None:
         front = sum(ms for who, ms in seen["front"] if "Chrome" in who)
         top = sum(ms for who, ms in seen["top"] if "Chrome" in who)
         results[arm].append((bound, present, web_after))
-        print(f"cycle {cycle} arm={arm} bound={bound} took={seen['took_s']}s chrome_front_ms={front} chrome_top_ms={top} keys={seen['keys']} {note} {message}")
+        print(f"cycle {cycle} arm={arm} bound={bound} fronted={seen['fronted']} took={seen['took_s']}s chrome_front_ms={front} chrome_top_ms={top} keys={seen['keys']} {note} {message}")
         dump_trace(f"cycle {cycle}")
     lines = ["### first attach after a Chrome launch, build " + BUILD, "", "| arm | bound | page tree read | seconds to page tree |", "|---|---|---|---|"]
     for arm, seen in results.items():
@@ -461,9 +461,12 @@ def main() -> None:
     print("chrome version:", run(["defaults", "read", f"{CHROME}/Contents/Info", "CFBundleShortVersionString"]).stdout.strip())
 
     def front_host() -> bool:
-        run(["open", "-a", HOST, HOST_FILE], 15)
-        time.sleep(1.0)
-        return watch.current("front") == HOST
+        for _ in range(6):
+            run(["open", "-a", HOST, HOST_FILE], 15)
+            time.sleep(1.0)
+            if watch.current("front") == HOST:
+                return True
+        return False
 
     def phase(fn, name, rep):
         if TYPING:
@@ -512,6 +515,7 @@ def main() -> None:
         if os.environ.get("AB_THEN_REPS") != "on":
             return
         restart_chrome()
+        print("host in front before the reps:", front_host())
     rows = []
     for rep in range(1, REPS + 1):
         session = f"s{rep}"

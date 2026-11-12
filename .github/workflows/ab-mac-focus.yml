@@ -22,17 +22,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { build: A, mode: probe, arms: first_read, reps: "on", frames: "on", trial: 1 }
-          - { build: A, mode: probe, arms: first_read, reps: "on", frames: "on", trial: 2 }
-          - { build: Q, mode: probe, arms: first_read, reps: "off", frames: "off", trial: 1, checks: "on" }
-          - { build: Q, mode: probe, arms: first_read, reps: "off", frames: "off", trial: 2 }
-          - { build: F, mode: probe, arms: "off", reps: "on", frames: "on", trial: 1, checks: "on" }
-          - { build: F, mode: probe, arms: "off", reps: "on", frames: "on", trial: 2 }
-          - { build: F, mode: probe, arms: "off", reps: "on", frames: "on", trial: 3 }
-          - { build: F, mode: probe, arms: "minimized,hidden", reps: "off", frames: "off", trial: 1 }
-          - { build: A, mode: e2e, arms: none, trial: 1 }
-          - { build: Q, mode: e2e, arms: none, trial: 1 }
-          - { build: F, mode: e2e, arms: none, trial: 1 }
+          - { build: A, mode: probe, arms: reps, cycles: "0", reps: "on", frames: "on", trial: 1 }
+          - { build: A, mode: probe, arms: reps, cycles: "0", reps: "on", frames: "on", trial: 2 }
+          - { build: F, mode: probe, arms: reps, cycles: "0", reps: "on", frames: "on", trial: 1 }
+          - { build: F, mode: probe, arms: reps, cycles: "0", reps: "on", frames: "on", trial: 2 }
+          - { build: F, mode: probe, arms: reps, cycles: "0", reps: "on", frames: "on", trial: 3 }
     steps:
       - uses: actions/checkout@v4
       - name: Tools
@@ -88,7 +82,7 @@ jobs:
           AB_TYPING: "on"
           AB_PREWARM: "off"
           AB_TRIAL: ${{ matrix.trial }}
-          AB_CYCLES: "12"
+          AB_CYCLES: ${{ matrix.cycles || '12' }}
           AB_ARMS: ${{ matrix.arms }}
           AB_THEN_REPS: ${{ matrix.reps }}
           AB_FRAMES: ${{ matrix.frames }}
