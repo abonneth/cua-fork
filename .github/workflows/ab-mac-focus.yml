@@ -8,7 +8,7 @@ on:
 env:
   SHA_A: e3b909029d8dc0d5a0c7269b3fac378eddb01e10
   SHA_Q: 2d712d9889ad6c67dc194bbfcd2498124112b1bb
-  SHA_F: 0f653c09ee0c8bfd94818d25b5ee1b4291c5d25d
+  SHA_F: ec1252c0ad4817a2cce8196e2b56aad7547f4284
   CUA_E2E_RETRY_ONCE: "1"
   CUA_TELEMETRY: "0"
   DO_NOT_TRACK: "1"
@@ -22,9 +22,13 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { build: Q, mode: e2e, arms: lane, trial: 1 }
           - { build: F, mode: e2e, arms: lane, trial: 1 }
           - { build: F, mode: checks, arms: none, trial: 1, checks: "on" }
+          - { build: F, mode: probe, arms: "minimized,hidden", frames: "on", trial: 1 }
+          - { build: A, mode: probe, arms: "minimized,hidden", frames: "on", trial: 1 }
+          - { build: F, mode: probe, arms: "off", frames: "on", trial: 1 }
+          - { build: F, mode: probe, arms: "off", frames: "on", trial: 2 }
+          - { build: F, mode: probe, arms: reps, cycles: "0", reps: "on", frames: "on", trial: 1 }
     steps:
       - uses: actions/checkout@v4
       - name: Tools
