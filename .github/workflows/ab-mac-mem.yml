@@ -1,0 +1,83 @@
+name: ab-mac-mem
+
+on:
+  push:
+    branches: [ab/mac-mem]
+  workflow_dispatch:
+
+env:
+  SHA_A: 57edfe91a88fb8c9f97ce161ddeafefe533cd3de
+  SHA_B: 91bd8e07d1ff78115f6ee0ad08c2464e47a07ed7
+  CARGO_NET_RETRY: "10"
+  CARGO_INCREMENTAL: "0"
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+
+jobs:
+  apple:
+    name: apple ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15-intel, macos-26-intel, macos-15, macos-26]
+    steps:
+      - uses: actions/checkout@v4
+      - name: ScreenCaptureKit alone, no driver
+        run: |
+          sw_vers
+          sysctl -n hw.model
+          swiftc -O -o "$RUNNER_TEMP/sck_leak" ab/sck_leak.swift
+          "$RUNNER_TEMP/sck_leak" 25
+
+  driver:
+    name: driver ${{ matrix.os }} overlay ${{ matrix.overlay }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15-intel, macos-26-intel, macos-26]
+        overlay: ["off", "on"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build main and the fix
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/src"
+          git init -q "$src"
+          git -C "$src" remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git -C "$src" remote add upstream https://github.com/trycua/cua.git
+          git -C "$src" fetch -q --depth 1 upstream "$SHA_A"
+          git -C "$src" fetch -q --depth 1 origin "$SHA_B"
+          mkdir -p "$RUNNER_TEMP/bin"
+          for build in A B; do
+            sha="$SHA_A"; [ "$build" = B ] && sha="$SHA_B"
+            git -C "$src" checkout -q --force "$sha"
+            (cd "$src/libs/cua-driver/rust" && CARGO_TARGET_DIR="$RUNNER_TEMP/target" cargo build --locked --release -p cua-driver 2>&1 | tail -3)
+            cp "$RUNNER_TEMP/target/release/cua-driver" "$RUNNER_TEMP/bin/cua-driver-$build"
+          done
+          ls -la "$RUNNER_TEMP/bin"
+      - name: Memory across captures, main then the fix then the fix then main
+        env:
+          AB_OVERLAY: ${{ matrix.overlay }}
+          AB_CALLS: "30"
+        run: |
+          sw_vers
+          sysctl -n hw.model
+          for run in A1:A B1:B B2:B A2:A; do
+            python3 -u ab/mac_mem.py "$RUNNER_TEMP/bin/cua-driver-${run#*:}" "${run%:*}" || echo "run $run exited $?"
+          done
+      - name: Unit tests at the fix head, as ci-rust-macos runs them
+        if: ${{ !cancelled() && matrix.overlay == 'off' }}
+        run: |
+          cd "$RUNNER_TEMP/src/libs/cua-driver/rust"
+          git rev-parse HEAD
+          CARGO_TARGET_DIR="$RUNNER_TEMP/target-check" cargo test --locked -p platform-macos --lib
+      - name: Clippy at the fix head, as ci-rust-macos runs it
+        if: ${{ !cancelled() && matrix.overlay == 'off' }}
+        run: |
+          cd "$RUNNER_TEMP/src/libs/cua-driver/rust"
+          rustup component add clippy
+          CARGO_TARGET_DIR="$RUNNER_TEMP/target-check" cargo clippy --locked --workspace --all-targets -- -D warnings
