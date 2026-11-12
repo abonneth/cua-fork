@@ -50,6 +50,18 @@ def surfaces(pid: int) -> str:
     return f"{row.group(1)} in {row.group(2)}" if row else "none"
 
 
+def stuck(pid: int) -> str:
+    """Large blocks CoreGraphics holds in its purgeable zone that the kernel cannot purge."""
+    out = subprocess.run(["vmmap", str(pid)], capture_output=True, text=True).stdout
+    sizes = []
+    for line in out.splitlines():
+        if line.startswith("MALLOC_LARGE ") and "DefaultPurgeableMallocZone" in line and "PURGE=" not in line:
+            found = re.search(r"\[\s*([\d.]+)([KMG])", line)
+            if found:
+                sizes.append(float(found.group(1)) * {"K": 1 / 1024, "M": 1.0, "G": 1024.0}[found.group(2)])
+    return f"{len(sizes)} ({sum(sizes):.0f} MB)"
+
+
 def live(pid: int) -> dict[str, int]:
     out = subprocess.run(["heap", str(pid)], capture_output=True, text=True).stdout
     counts = {}
@@ -69,7 +81,7 @@ def report(pid: int, label: str, times: list[float] | None = None) -> dict:
     print(
         f"[{LABEL}] {label:44s} footprint={megabytes:8.1f} MB malloc_large={large:18s}"
         f" CGImage={counts['CGImage']:3d} IOSurface={counts['IOSurface']:3d}"
-        f" iosurface_mapped={surfaces(pid):14s}{timing}",
+        f" iosurface_mapped={surfaces(pid):14s} unpurgeable_cg_copies={stuck(pid):14s}{timing}",
         flush=True,
     )
     return {"label": label, "footprint_mb": megabytes, **counts, "times_ms": times or []}
@@ -92,17 +104,26 @@ def phase(pid: int, label: str, tool: str, args: dict, count: int) -> dict:
     return row
 
 
-def text_window() -> tuple[int, int] | None:
-    note = WORK / "note.txt"
-    note.write_text("memory probe\n" * 40)
-    subprocess.run(["open", "-a", "TextEdit", str(note)], check=False)
+def target_window() -> tuple[int, int, str] | None:
+    app = os.environ.get("AB_WINDOW_APP")
+    if not app:
+        app = "TextEdit"
+        note = WORK / "note.txt"
+        note.write_text("memory probe\n" * 40)
+        subprocess.run(["open", "-a", app, str(note)], check=False)
+        time.sleep(3)
+        grow = 'tell application "TextEdit" to set bounds of front window to {0, 30, 1800, 1050}'
+        subprocess.run(["osascript", "-e", grow], capture_output=True, timeout=30, check=False)
     deadline = time.monotonic() + 30
+    windows = []
     while time.monotonic() < deadline:
         ok, text, _ = call("list_windows")
         windows = json.loads(text).get("windows", []) if ok else []
-        for window in windows:
-            if window.get("app_name") == "TextEdit" and window.get("bounds", {}).get("height", 0) > 100:
-                return window["pid"], window["window_id"]
+        mine = [w for w in windows if w.get("app_name") == app and w.get("is_on_screen") and w.get("bounds", {}).get("height", 0) > 100]
+        if mine:
+            best = max(mine, key=lambda w: w["bounds"]["width"] * w["bounds"]["height"])
+            bounds = best["bounds"]
+            return best["pid"], best["window_id"], f"{app} {bounds['width']:.0f}x{bounds['height']:.0f} pt"
         time.sleep(1)
     listed = [(w.get("app_name"), w.get("is_on_screen"), w.get("bounds")) for w in windows]
     print(f"[{LABEL}] windows listed: {listed}", flush=True)
@@ -138,15 +159,23 @@ def main() -> int:
         rows.append(phase(daemon.pid, "get_desktop_state", "get_desktop_state", {"screenshot_out_file": shot}, N))
     time.sleep(20)
     rows.append(report(daemon.pid, "idle 20 s"))
-    target = text_window()
+    target = target_window()
     if target is None:
-        print(f"[{LABEL}] no TextEdit window listed", flush=True)
+        print(f"[{LABEL}] no window to capture", flush=True)
     else:
         args = {"pid": target[0], "window_id": target[1], "screenshot_out_file": str(WORK / "window.png")}
-        rows.append(phase(daemon.pid, "get_window_state", "get_window_state", args, N))
+        rows.append(phase(daemon.pid, f"get_window_state {target[2]}", "get_window_state", args, N))
+        rows.append(phase(daemon.pid, "get_desktop_state", "get_desktop_state", {"screenshot_out_file": shot}, 5))
+    keep = os.environ.get("AB_SHOTS")
+    if keep:
+        Path(keep).mkdir(parents=True, exist_ok=True)
+        for name in ("shot.png", "window.png"):
+            if (WORK / name).exists():
+                (Path(keep) / f"{LABEL}-{name}").write_bytes((WORK / name).read_bytes())
     alive = daemon.poll() is None
     print(f"[{LABEL}] daemon alive at the end: {alive}", flush=True)
     desktop = [row for row in rows if row["label"].startswith(f"{N}x get_desktop_state")]
+    peak = max(row["footprint_mb"] for row in rows)
     summary = {
         "label": LABEL,
         "overlay": OVERLAY,
@@ -156,6 +185,9 @@ def main() -> int:
         "cgimage_after": desktop[-1]["CGImage"],
         "footprint_before_mb": rows[1]["footprint_mb"],
         "footprint_after_mb": desktop[-1]["footprint_mb"],
+        "footprint_end_mb": rows[-1]["footprint_mb"],
+        "footprint_peak_mb": peak,
+        "unpurgeable_cg_copies_end": stuck(daemon.pid),
         "p50_ms": statistics.median([t for row in desktop for t in row["times_ms"]] or [0]),
     }
     print(f"[{LABEL}] SUMMARY {json.dumps(summary)}", flush=True)

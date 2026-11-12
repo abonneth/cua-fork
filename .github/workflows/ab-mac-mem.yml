@@ -8,6 +8,7 @@ on:
 env:
   SHA_A: 57edfe91a88fb8c9f97ce161ddeafefe533cd3de
   SHA_B: 91bd8e07d1ff78115f6ee0ad08c2464e47a07ed7
+  SHA_C: 695131a85a8dd88953bb9b30853c013be651d840
   BIN_RUN: "43280001005"
   CARGO_NET_RETRY: "10"
   CARGO_INCREMENTAL: "0"
@@ -15,42 +16,99 @@ env:
   DO_NOT_TRACK: "1"
 
 jobs:
-  driver:
-    name: driver ${{ matrix.os }} overlay ${{ matrix.overlay }}
+  intel:
+    name: intel ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    timeout-minutes: 150
     strategy:
       fail-fast: false
       matrix:
         os: [macos-15-intel, macos-26-intel]
-        overlay: ["off", "on"]
     steps:
       - uses: actions/checkout@v4
-      - name: Binaries built by the earlier run
+      - name: Main and the first commit, built by the earlier run
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh run download "$BIN_RUN" --repo "$GITHUB_REPOSITORY" -n "bin-${{ matrix.os }}" -D "$RUNNER_TEMP/bin"
+      - name: Build the fix head
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/src"
+          git init -q "$src"
+          git -C "$src" remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git -C "$src" fetch -q --depth 1 origin "$SHA_C"
+          git -C "$src" checkout -q --force "$SHA_C"
+          cd "$src/libs/cua-driver/rust"
+          CARGO_TARGET_DIR="$RUNNER_TEMP/target" cargo build --locked --release -p cua-driver 2>&1 | tail -3
+          cp "$RUNNER_TEMP/target/release/cua-driver" "$RUNNER_TEMP/bin/cua-driver-C"
           chmod +x "$RUNNER_TEMP"/bin/*
           shasum "$RUNNER_TEMP"/bin/*
-      - name: Memory across captures, main then the fix then the fix then main
+      - name: Memory across captures
         env:
-          AB_OVERLAY: ${{ matrix.overlay }}
           AB_CALLS: "30"
+          AB_SHOTS: ${{ runner.temp }}/shots
         run: |
           sw_vers
           sysctl -n hw.model
           system_profiler SPDisplaysDataType | grep -E "Resolution|UI Looks" || true
-          for run in A1:A B1:B B2:B A2:A; do
-            python3 -u ab/mac_mem.py "$RUNNER_TEMP/bin/cua-driver-${run#*:}" "${run%:*}" || echo "run $run exited $?"
+          for overlay in off on; do
+            for run in A1:A C1:C B1:B C2:C A2:A; do
+              AB_OVERLAY="$overlay" python3 -u ab/mac_mem.py "$RUNNER_TEMP/bin/cua-driver-${run#*:}" "${run%:*}-$overlay" || echo "run $run exited $?"
+            done
           done
+      - name: Screenshots, main against the fix
+        run: |
+          python3 ab/png_diff.py "$RUNNER_TEMP/shots" A1-off-shot:A2-off-shot A1-off-shot:C1-off-shot A2-off-shot:C2-off-shot A1-off-window:C1-off-window A1-on-shot:C1-on-shot || true
+      - name: The same read outside the driver
+        run: |
+          swiftc -O -o "$RUNNER_TEMP/px_equal" ab/px_equal.swift
+          "$RUNNER_TEMP/px_equal" || echo "px_equal exited $?"
+          swiftc -Onone -o "$RUNNER_TEMP/cg_cache" ab/cg_cache.swift
+          for variant in drawRGBA+work vimage+work; do "$RUNNER_TEMP/cg_cache" 20 "$variant" || echo "cg_cache exited $?"; done
+      - name: Unit tests and clippy at the fix head
+        run: |
+          cd "$RUNNER_TEMP/src/libs/cua-driver/rust"
+          export CARGO_TARGET_DIR="$RUNNER_TEMP/target"
+          cargo test --locked -p platform-macos --lib 2>&1 | tail -25 || echo "tests exited $?"
+          cargo clippy --locked --workspace --all-targets -- -D warnings 2>&1 | tail -15 || echo "clippy exited $?"
 
   cross:
-    name: arm64 binaries built on Intel
+    name: arm64 fix head built on Intel
     runs-on: macos-15-intel
     timeout-minutes: 150
     steps:
-      - name: Build main and the fix for aarch64-apple-darwin
+      - name: Build for aarch64-apple-darwin
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/src"
+          git init -q "$src"
+          git -C "$src" remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git -C "$src" fetch -q --depth 1 origin "$SHA_C"
+          git -C "$src" checkout -q --force "$SHA_C"
+          cd "$src/libs/cua-driver/rust"
+          rustup target add aarch64-apple-darwin
+          mkdir -p "$RUNNER_TEMP/bin"
+          CARGO_TARGET_DIR="$RUNNER_TEMP/target" cargo build --locked --release --target aarch64-apple-darwin -p cua-driver 2>&1 | tail -3
+          cp "$RUNNER_TEMP/target/aarch64-apple-darwin/release/cua-driver" "$RUNNER_TEMP/bin/cua-driver-C"
+          shasum "$RUNNER_TEMP"/bin/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bin-arm64-C
+          path: ${{ runner.temp }}/bin
+          retention-days: 3
+
+  arm:
+    name: arm64 ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-26, macos-15]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build main and the fix head
         run: |
           set -euo pipefail
           src="$RUNNER_TEMP/src"
@@ -58,20 +116,40 @@ jobs:
           git -C "$src" remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
           git -C "$src" remote add upstream https://github.com/trycua/cua.git
           git -C "$src" fetch -q --depth 1 upstream "$SHA_A"
-          git -C "$src" fetch -q --depth 1 origin "$SHA_B"
+          git -C "$src" fetch -q --depth 1 origin "$SHA_C"
           mkdir -p "$RUNNER_TEMP/bin"
-          for build in A B; do
-            sha="$SHA_A"; [ "$build" = B ] && sha="$SHA_B"
+          for build in A C; do
+            sha="$SHA_A"; [ "$build" = C ] && sha="$SHA_C"
             git -C "$src" checkout -q --force "$sha"
             cd "$src/libs/cua-driver/rust"
-            rustup target add aarch64-apple-darwin
-            CARGO_TARGET_DIR="$RUNNER_TEMP/target" cargo build --locked --release --target aarch64-apple-darwin -p cua-driver 2>&1 | tail -3
-            cp "$RUNNER_TEMP/target/aarch64-apple-darwin/release/cua-driver" "$RUNNER_TEMP/bin/cua-driver-$build"
+            CARGO_TARGET_DIR="$RUNNER_TEMP/target" cargo build --locked --release -p cua-driver 2>&1 | tail -3
+            cp "$RUNNER_TEMP/target/release/cua-driver" "$RUNNER_TEMP/bin/cua-driver-$build"
           done
-          file "$RUNNER_TEMP"/bin/*
           shasum "$RUNNER_TEMP"/bin/*
       - uses: actions/upload-artifact@v4
         with:
-          name: bin-arm64
+          name: bin-${{ matrix.os }}-AC
           path: ${{ runner.temp }}/bin
           retention-days: 3
+      - name: Memory across captures
+        env:
+          AB_CALLS: "30"
+          AB_SHOTS: ${{ runner.temp }}/shots
+        run: |
+          sw_vers
+          sysctl -n hw.model
+          system_profiler SPDisplaysDataType | grep -E "Resolution|UI Looks" || true
+          for overlay in off on; do
+            for run in A1:A C1:C C2:C A2:A; do
+              AB_OVERLAY="$overlay" python3 -u ab/mac_mem.py "$RUNNER_TEMP/bin/cua-driver-${run#*:}" "${run%:*}-$overlay" || echo "run $run exited $?"
+            done
+          done
+      - name: Screenshots, main against the fix
+        run: |
+          python3 ab/png_diff.py "$RUNNER_TEMP/shots" A1-off-shot:A2-off-shot A1-off-shot:C1-off-shot A2-off-shot:C2-off-shot A1-off-window:C1-off-window || true
+      - name: The same read outside the driver
+        run: |
+          swiftc -O -o "$RUNNER_TEMP/px_equal" ab/px_equal.swift
+          "$RUNNER_TEMP/px_equal" || echo "px_equal exited $?"
+          swiftc -Onone -o "$RUNNER_TEMP/cg_cache" ab/cg_cache.swift
+          for variant in drawRGBA+work vimage+work; do "$RUNNER_TEMP/cg_cache" 20 "$variant" || echo "cg_cache exited $?"; done
