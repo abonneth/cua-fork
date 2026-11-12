@@ -44,6 +44,12 @@ def footprint(pid: int) -> tuple[float, str]:
     return megabytes, f"{large.group(1)} in {large.group(2)}" if large else "none"
 
 
+def surfaces(pid: int) -> str:
+    out = subprocess.run(["vmmap", "-summary", str(pid)], capture_output=True, text=True).stdout
+    row = re.search(r"^IOSurface\s+([\d.]+[KMG])\s.*?(\d+)\s*$", out, re.M)
+    return f"{row.group(1)} in {row.group(2)}" if row else "none"
+
+
 def live(pid: int) -> dict[str, int]:
     out = subprocess.run(["heap", str(pid)], capture_output=True, text=True).stdout
     counts = {}
@@ -62,7 +68,8 @@ def report(pid: int, label: str, times: list[float] | None = None) -> dict:
         timing = f" call_ms p50={statistics.median(ordered):.0f} p90={ordered[int(len(ordered) * 0.9) - 1]:.0f}"
     print(
         f"[{LABEL}] {label:44s} footprint={megabytes:8.1f} MB malloc_large={large:18s}"
-        f" CGImage={counts['CGImage']:3d} IOSurface={counts['IOSurface']:3d}{timing}",
+        f" CGImage={counts['CGImage']:3d} IOSurface={counts['IOSurface']:3d}"
+        f" iosurface_mapped={surfaces(pid):14s}{timing}",
         flush=True,
     )
     return {"label": label, "footprint_mb": megabytes, **counts, "times_ms": times or []}
@@ -92,11 +99,13 @@ def text_window() -> tuple[int, int] | None:
     deadline = time.monotonic() + 30
     while time.monotonic() < deadline:
         ok, text, _ = call("list_windows")
-        if ok:
-            for window in json.loads(text).get("windows", []):
-                if window.get("app_name") == "TextEdit" and window.get("is_on_screen"):
-                    return window["pid"], window["window_id"]
+        windows = json.loads(text).get("windows", []) if ok else []
+        for window in windows:
+            if window.get("app_name") == "TextEdit" and window.get("bounds", {}).get("height", 0) > 100:
+                return window["pid"], window["window_id"]
         time.sleep(1)
+    listed = [(w.get("app_name"), w.get("is_on_screen"), w.get("bounds")) for w in windows]
+    print(f"[{LABEL}] windows listed: {listed}", flush=True)
     return None
 
 

@@ -8,41 +8,49 @@ on:
 env:
   SHA_A: 57edfe91a88fb8c9f97ce161ddeafefe533cd3de
   SHA_B: 91bd8e07d1ff78115f6ee0ad08c2464e47a07ed7
+  BIN_RUN: "43280001005"
   CARGO_NET_RETRY: "10"
   CARGO_INCREMENTAL: "0"
   CUA_TELEMETRY: "0"
   DO_NOT_TRACK: "1"
 
 jobs:
-  apple:
-    name: apple ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [macos-15-intel, macos-26-intel, macos-15, macos-26]
-    steps:
-      - uses: actions/checkout@v4
-      - name: ScreenCaptureKit alone, no driver
-        run: |
-          sw_vers
-          sysctl -n hw.model
-          swiftc -O -o "$RUNNER_TEMP/sck_leak" ab/sck_leak.swift
-          "$RUNNER_TEMP/sck_leak" 25
-
   driver:
     name: driver ${{ matrix.os }} overlay ${{ matrix.overlay }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 150
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-15-intel, macos-26-intel, macos-26]
+        os: [macos-15-intel, macos-26-intel]
         overlay: ["off", "on"]
     steps:
       - uses: actions/checkout@v4
-      - name: Build main and the fix
+      - name: Binaries built by the earlier run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download "$BIN_RUN" --repo "$GITHUB_REPOSITORY" -n "bin-${{ matrix.os }}" -D "$RUNNER_TEMP/bin"
+          chmod +x "$RUNNER_TEMP"/bin/*
+          shasum "$RUNNER_TEMP"/bin/*
+      - name: Memory across captures, main then the fix then the fix then main
+        env:
+          AB_OVERLAY: ${{ matrix.overlay }}
+          AB_CALLS: "30"
+        run: |
+          sw_vers
+          sysctl -n hw.model
+          system_profiler SPDisplaysDataType | grep -E "Resolution|UI Looks" || true
+          for run in A1:A B1:B B2:B A2:A; do
+            python3 -u ab/mac_mem.py "$RUNNER_TEMP/bin/cua-driver-${run#*:}" "${run%:*}" || echo "run $run exited $?"
+          done
+
+  cross:
+    name: arm64 binaries built on Intel
+    runs-on: macos-15-intel
+    timeout-minutes: 150
+    steps:
+      - name: Build main and the fix for aarch64-apple-darwin
         run: |
           set -euo pipefail
           src="$RUNNER_TEMP/src"
@@ -55,35 +63,15 @@ jobs:
           for build in A B; do
             sha="$SHA_A"; [ "$build" = B ] && sha="$SHA_B"
             git -C "$src" checkout -q --force "$sha"
-            (cd "$src/libs/cua-driver/rust" && CARGO_TARGET_DIR="$RUNNER_TEMP/target" cargo build --locked --release -p cua-driver 2>&1 | tail -3)
-            cp "$RUNNER_TEMP/target/release/cua-driver" "$RUNNER_TEMP/bin/cua-driver-$build"
+            cd "$src/libs/cua-driver/rust"
+            rustup target add aarch64-apple-darwin
+            CARGO_TARGET_DIR="$RUNNER_TEMP/target" cargo build --locked --release --target aarch64-apple-darwin -p cua-driver 2>&1 | tail -3
+            cp "$RUNNER_TEMP/target/aarch64-apple-darwin/release/cua-driver" "$RUNNER_TEMP/bin/cua-driver-$build"
           done
-          ls -la "$RUNNER_TEMP/bin"
-      - name: Memory across captures, main then the fix then the fix then main
-        env:
-          AB_OVERLAY: ${{ matrix.overlay }}
-          AB_CALLS: "30"
-        run: |
-          sw_vers
-          sysctl -n hw.model
-          for run in A1:A B1:B B2:B A2:A; do
-            python3 -u ab/mac_mem.py "$RUNNER_TEMP/bin/cua-driver-${run#*:}" "${run%:*}" || echo "run $run exited $?"
-          done
+          file "$RUNNER_TEMP"/bin/*
+          shasum "$RUNNER_TEMP"/bin/*
       - uses: actions/upload-artifact@v4
-        if: ${{ !cancelled() && matrix.overlay == 'off' }}
         with:
-          name: bin-${{ matrix.os }}
+          name: bin-arm64
           path: ${{ runner.temp }}/bin
           retention-days: 3
-      - name: Unit tests at the fix head, as ci-rust-macos runs them
-        if: ${{ !cancelled() && matrix.overlay == 'off' }}
-        run: |
-          cd "$RUNNER_TEMP/src/libs/cua-driver/rust"
-          git rev-parse HEAD
-          CARGO_TARGET_DIR="$RUNNER_TEMP/target-check" cargo test --locked -p platform-macos --lib
-      - name: Clippy at the fix head, as ci-rust-macos runs it
-        if: ${{ !cancelled() && matrix.overlay == 'off' }}
-        run: |
-          cd "$RUNNER_TEMP/src/libs/cua-driver/rust"
-          rustup component add clippy
-          CARGO_TARGET_DIR="$RUNNER_TEMP/target-check" cargo clippy --locked --workspace --all-targets -- -D warnings
