@@ -418,8 +418,11 @@ def first_attach_cycles(cycles: int, phase, front_host) -> None:
             note = f"window off screen before={away} is_on_screen={seen.get('is_on_screen')} on_current_space={seen.get('on_current_space')}"
         call("start_session", {"session": session})
         reply, seen = phase(lambda: structured(call("browser_prepare", {**where, "strategy": {"kind": "existing_profile"}})), f"first-{arm}", cycle + 10)
-        bound = bool(structured(call("get_browser_state", where)).get("target_id"))
+        bind = structured(call("get_browser_state", where))
+        bound = bool(bind.get("target_id"))
         message = (reply.get("refusal") or {}).get("message", "")[:120]
+        endpoint = (reply.get("endpoint_ownership") or {}).get("detail")
+        bind_code = (bind.get("refusal") or {}).get("code")
         if arm in ("minimized", "hidden"):
             listed = chrome_window_listed(where["window_id"], True)
             note += f" window off screen after={listed is None} code={(reply.get('refusal') or {}).get('code') or reply.get('status')}"
@@ -430,7 +433,7 @@ def first_attach_cycles(cycles: int, phase, front_host) -> None:
         front = sum(ms for who, ms in seen["front"] if "Chrome" in who)
         top = sum(ms for who, ms in seen["top"] if "Chrome" in who)
         results[arm].append((bound, present, web_after))
-        print(f"cycle {cycle} arm={arm} bound={bound} fronted={seen['fronted']} took={seen['took_s']}s chrome_front_ms={front} chrome_top_ms={top} keys={seen['keys']} {note} {message}")
+        print(f"cycle {cycle} arm={arm} bound={bound} fronted={seen['fronted']} took={seen['took_s']}s chrome_front_ms={front} chrome_top_ms={top} keys={seen['keys']} endpoint={endpoint!r} bind_refusal={bind_code} {note} {message}")
         dump_trace(f"cycle {cycle}")
     lines = ["### first attach after a Chrome launch, build " + BUILD, "", "| arm | bound | page tree read | seconds to page tree |", "|---|---|---|---|"]
     for arm, seen in results.items():
@@ -474,7 +477,7 @@ def main() -> None:
         fronted = front_host()
         before = host_xs() if TYPING else 0
         t0 = time.time()
-        if rep <= 2:
+        if rep <= 2 or os.environ.get("AB_SHOTS") == "on":
             for at in (1.5, 4.0, 8.0, 11.0):
                 threading.Timer(at, shot, args=(f"{VARIANT}-{BUILD}-{name}-r{rep}-{at}s.png",)).start()
         typist = Typist() if TYPING else None
@@ -549,7 +552,7 @@ def main() -> None:
             _, phases["act"] = phase(lambda: call("browser_navigate", {**where, "target_id": state["target_id"], "tab_id": tab, "url": f"https://example.com/?rep={rep}"}), "act", rep)
         ended, phases["end_session"] = phase(lambda: structured(call("end_session", {"session": session})), "end_session", rep)
         done = sorted(k for k, v in effects.items() if v is True)
-        print(f"rep {rep}: {outcome} bound={bound} side_effects={done} end={json.dumps(ended)[:200]}")
+        print(f"rep {rep}: {outcome} bound={bound} endpoint={(reply.get('endpoint_ownership') or {}).get('detail')!r} side_effects={done} end={json.dumps(ended)[:200]}")
         dump_trace(f"rep {rep}")
         for name, seen in phases.items():
             print(f"  {name}: {json.dumps(seen)}")
