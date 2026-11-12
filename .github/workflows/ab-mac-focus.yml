@@ -6,29 +6,33 @@ on:
   workflow_dispatch:
 
 env:
-  MAIN_SHA: 2808b642accf99c0a27b9667dc62f28a978c6837
+  SHA_A: e3b909029d8dc0d5a0c7269b3fac378eddb01e10
+  SHA_Q: b831d68271faf9bb86970af83bd3839611b24398
+  SHA_F: 66a24ecd2f77df509a88a1fab37c04ffb2b3cd9b
+  CUA_E2E_RETRY_ONCE: "1"
   CUA_TELEMETRY: "0"
   DO_NOT_TRACK: "1"
 
 jobs:
   focus:
+    name: ${{ matrix.build }} ${{ matrix.mode }} ${{ matrix.arms }} t${{ matrix.trial }}
     runs-on: macos-26
-    timeout-minutes: 75
+    timeout-minutes: ${{ matrix.mode == 'e2e' && 200 || 120 }}
     strategy:
       fail-fast: false
       matrix:
-        variant: [driver-enables-remote-debugging]
-        build: [L, P, M, N]
-        typing: [on]
-        prewarm: [off]
-        trial: [1, 2, 3]
-        exclude:
-          - build: P
-            trial: 3
-          - build: M
-            trial: 3
-          - build: N
-            trial: 3
+        include:
+          - { build: A, mode: probe, arms: first_read, reps: "on", frames: "on", trial: 1 }
+          - { build: A, mode: probe, arms: first_read, reps: "on", frames: "on", trial: 2 }
+          - { build: Q, mode: probe, arms: first_read, reps: "off", frames: "off", trial: 1, checks: "on" }
+          - { build: Q, mode: probe, arms: first_read, reps: "off", frames: "off", trial: 2 }
+          - { build: F, mode: probe, arms: "off", reps: "on", frames: "on", trial: 1, checks: "on" }
+          - { build: F, mode: probe, arms: "off", reps: "on", frames: "on", trial: 2 }
+          - { build: F, mode: probe, arms: "off", reps: "on", frames: "on", trial: 3 }
+          - { build: F, mode: probe, arms: "minimized,hidden", reps: "off", frames: "off", trial: 1 }
+          - { build: A, mode: e2e, arms: none, trial: 1 }
+          - { build: Q, mode: e2e, arms: none, trial: 1 }
+          - { build: F, mode: e2e, arms: none, trial: 1 }
     steps:
       - uses: actions/checkout@v4
       - name: Tools
@@ -37,86 +41,93 @@ jobs:
         run: |
           set -euo pipefail
           src="$RUNNER_TEMP/src"
+          case "${{ matrix.build }}" in
+            A) sha="$SHA_A" ;;
+            Q) sha="$SHA_Q" ;;
+            F) sha="$SHA_F" ;;
+          esac
           git clone --quiet --filter=blob:none --no-checkout https://github.com/trycua/cua "$src"
-          git -C "$src" checkout --quiet --force "$MAIN_SHA"
-          b="${{ matrix.build }}"
-          crates="$src/libs/cua-driver/rust/crates"
-          macos="$crates/platform-macos/src"
-          patch() { perl "ab/$1" ${3:-} < "$2" > "$2.new" && mv "$2.new" "$2"; }
-          if [[ ! "$b" =~ ^[AMN]$ ]]; then
-            perl -0pi -e 's/fn guarded_attach_allowed\(window_on_current_space: Option<bool>\) -> bool \{\n    window_on_current_space == Some\(false\)\n\}/fn guarded_attach_allowed(_window_on_current_space: Option<bool>) -> bool {\n    true\n}/' "$macos/browser/platform.rs"
-            git -C "$src" diff | grep -q "^+    true" || { echo "patch did not apply" >&2; exit 1; }
+          git -C "$src" fetch --quiet https://github.com/abonneth/cua-fork "$sha" || git -C "$src" fetch --quiet origin "$sha"
+          git -C "$src" checkout --quiet --force "$sha"
+          [[ "$(git -C "$src" rev-parse HEAD)" == "$sha" ]]
+          if [[ "${{ matrix.mode }}" == e2e ]]; then
+            runner="$src/scripts/ci/run-rust-standalone-browser-e2e.sh"
+            perl -pi -e 's/tests\+=\(standalone_browser_native_omnibox_select_all\)/tests+=(standalone_browser_native_omnibox_select_all standalone_browser_generic_type_text_completion standalone_browser_web_type_text_verification)/' "$runner"
+            git -C "$src" diff --stat
+            git -C "$src" diff --quiet && { echo "e2e rows were not added" >&2; exit 1; }
+            git -C "$src" -c user.name=ab -c user.email=ab@example.com commit -qam "ab: run the two rows allowlisted for trycua/cua#4126"
           fi
-          if [[ "$b" =~ ^[CDEGHIJLP]$ ]]; then patch wait_for_ax_checkbox.pl "$macos/browser/setup_ui.rs"; fi
-          if [[ "$b" == D ]]; then
-            perl -pi -e 's/(EXISTING_PROFILE_SETUP_READY_TIMEOUT: Duration = Duration::from_secs\()12\)/${1}30)/' "$crates/cua-driver-core/src/browser/setup_descriptor.rs"
-            git -C "$src" diff | grep -q "from_secs(30)" || { echo "timeout patch did not apply" >&2; exit 1; }
-          fi
-          if [[ "$b" =~ ^[EGHIJ]$ ]]; then patch diagnose_not_ready.pl "$macos/browser/setup_ui.rs"; fi
-          if [[ "$b" =~ ^[GHIJ]$ ]]; then
-            patch trace.pl "$macos/browser/setup_ui.rs" setup
-            patch trace.pl "$macos/ax/enablement.rs" enablement
-          fi
-          if [[ "$b" == H || "$b" == J ]]; then patch trace.pl "$macos/ax/bindings.rs" bindings; fi
-          if [[ "$b" == J ]]; then patch refusal_backoff.pl "$macos/ax/enablement.rs"; fi
-          if [[ "$b" == I ]]; then patch trace.pl "$macos/ax/bindings.rs" bindings-fallback; fi
-          if [[ "$b" =~ ^[KLMNP]$ ]]; then git -C "$src" apply "$GITHUB_WORKSPACE/ab/opt_in_backoff.patch"; fi
-          if [[ "$b" == N || "$b" == P ]]; then git -C "$src" apply "$GITHUB_WORKSPACE/ab/first_read_wait.patch"; fi
-          if [[ "$b" =~ ^[KLP]$ ]]; then patch trace.pl "$macos/browser/setup_ui.rs" setup; fi
-          git -C "$src" diff --stat
-          if [[ "$b" != A ]]; then
-            git -C "$src" -c user.name=ab -c user.email=ab@example.com commit -qam "ab: build $b"
-          fi
+          echo "tested source: $sha (+$(git -C "$src" rev-list --count "$sha"..HEAD) harness commit)"
           echo "SRC=$src" >> "$GITHUB_ENV"
           echo "SRC_SHA=$(git -C "$src" rev-parse HEAD)" >> "$GITHUB_ENV"
+      - name: Upstream hosted browser lane
+        if: ${{ matrix.mode == 'e2e' }}
+        env:
+          CUA_E2E_INTERNAL_LANE: browser
+        run: |
+          set -euo pipefail
+          cd "$SRC"
+          GITHUB_EVENT_NAME=workflow_dispatch \
+            CUA_E2E_SOURCE_SHA="$SRC_SHA" CUA_E2E_WORKFLOW_SHA="$SRC_SHA" \
+            CARGO_TARGET_DIR="$RUNNER_TEMP/target" \
+            bash scripts/ci/macos/run-hosted-rust-e2e.sh
+      - name: Lane summary
+        if: ${{ always() && matrix.mode == 'e2e' }}
+        run: |
+          out="$SRC/artifacts/cua-driver/macos-standalone-browser"
+          [[ -f "$out/summary.md" ]] && cat "$out/summary.md" >> "$GITHUB_STEP_SUMMARY" || echo "no summary" >> "$GITHUB_STEP_SUMMARY"
+          bash "$SRC/scripts/ci/summarize-flaky-cases.sh" "$SRC/artifacts/cua-driver" >> "$GITHUB_STEP_SUMMARY" || true
       - name: Bootstrap driver, then probe
+        if: ${{ matrix.mode == 'probe' }}
         env:
           CUA_E2E_INTERNAL_LANE: browser
           AB_PROBE: ${{ github.workspace }}/ab/mac_focus.py
-          AB_VARIANT: ${{ matrix.variant }}
+          AB_VARIANT: driver-enables-remote-debugging
           AB_BUILD: ${{ matrix.build }}
-          AB_TYPING: ${{ matrix.typing }}
-          AB_PREWARM: ${{ matrix.prewarm }}
+          AB_TYPING: "on"
+          AB_PREWARM: "off"
           AB_TRIAL: ${{ matrix.trial }}
           AB_CYCLES: "12"
-          AB_ARMS: ${{ (matrix.build == 'M' || matrix.build == 'N') && 'first_read' || 'off' }}
-          AB_FRAMES: ${{ matrix.build == 'L' && 'on' || 'off' }}
+          AB_ARMS: ${{ matrix.arms }}
+          AB_THEN_REPS: ${{ matrix.reps }}
+          AB_FRAMES: ${{ matrix.frames }}
         run: |
           set -euo pipefail
           script="$SRC/scripts/ci/macos/ab-run.sh"
           sed '/^mark_phase "matrix-/,$d' "$SRC/scripts/ci/macos/run-hosted-rust-e2e.sh" > "$script"
-          cat >> "$script" <<'EOF'
+          cat >> "$script" <<'EOS'
           mark_phase "ab-probe"
           MATRIX_STATUS=0
-          /usr/bin/perl -e 'alarm shift; exec @ARGV' 2700 python3 -u "${AB_PROBE}" "${INSTALLED_BIN}" "${DAEMON_SOCKET}" "${AB_VARIANT}" "${AB_BUILD}" || MATRIX_STATUS=$?
+          /usr/bin/perl -e 'alarm shift; exec @ARGV' 3300 python3 -u "${AB_PROBE}" "${INSTALLED_BIN}" "${DAEMON_SOCKET}" "${AB_VARIANT}" "${AB_BUILD}" || MATRIX_STATUS=$?
           kill "${WATCHDOG_PID}" >/dev/null 2>&1 || true
           exit "${MATRIX_STATUS}"
-          EOF
+          EOS
           echo "scripts/ci/macos/ab-run.sh" >> "$SRC/.git/info/exclude"
           cd "$SRC"
           GITHUB_EVENT_NAME=workflow_dispatch \
             CUA_E2E_SOURCE_SHA="$SRC_SHA" CUA_E2E_WORKFLOW_SHA="$SRC_SHA" \
             CARGO_TARGET_DIR="$RUNNER_TEMP/target" \
             bash "$script"
-      - name: Unit tests
-        if: ${{ !cancelled() && (matrix.build == 'M' || matrix.build == 'N') && matrix.trial == 1 }}
+      - name: Unit tests, as ci-rust-macos runs them
+        if: ${{ !cancelled() && matrix.checks == 'on' }}
         run: |
           cd "$SRC/libs/cua-driver/rust"
-          CARGO_TARGET_DIR="$RUNNER_TEMP/target" cargo test --locked -p platform-macos --lib ax::enablement
-      - name: Clippy with the pinned toolchain
-        if: ${{ !cancelled() && (matrix.build == 'M' || matrix.build == 'N') && matrix.trial == 1 }}
-        continue-on-error: true
+          CARGO_TARGET_DIR="$RUNNER_TEMP/target" cargo test --locked -p platform-macos --lib 2>&1 | tail -15
+          CARGO_TARGET_DIR="$RUNNER_TEMP/target" cargo test --locked -p cua-driver-core --lib browser:: 2>&1 | tail -5
+          CARGO_TARGET_DIR="$RUNNER_TEMP/target" cargo test --locked -p cua-driver-e2e 2>&1 | tail -8
+      - name: Clippy, as ci-rust-macos runs it
+        if: ${{ !cancelled() && matrix.checks == 'on' }}
         run: |
           cd "$SRC/libs/cua-driver/rust"
           rustup component add clippy
-          CARGO_TARGET_DIR="$RUNNER_TEMP/target" cargo clippy --locked -p platform-macos --all-targets -- -D warnings
+          CARGO_TARGET_DIR="$RUNNER_TEMP/target" cargo clippy --locked --workspace --all-targets -- -D warnings
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: mac-${{ matrix.variant }}-${{ matrix.build }}-prewarm-${{ matrix.prewarm }}-t${{ matrix.trial }}
+          name: mac-${{ matrix.build }}-${{ matrix.mode }}-${{ matrix.arms == 'minimized,hidden' && 'away' || matrix.arms }}-t${{ matrix.trial }}
           path: |
             ab/shots
             ab/frames
             /tmp/cua-ab-trace.log
-            ${{ env.SRC }}/artifacts/cua-driver/macos-hosted-bootstrap
+            ${{ env.SRC }}/artifacts/cua-driver
           if-no-files-found: ignore

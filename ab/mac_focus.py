@@ -334,6 +334,38 @@ def chrome_window() -> dict:
     return {"pid": best["pid"], "window_id": best["window_id"]}
 
 
+def chrome_window_listed(window_id: int, on_screen_only: bool) -> dict | None:
+    windows = structured(call("list_windows", {"on_screen_only": on_screen_only})).get("windows", [])
+    return next((w for w in windows if w.get("window_id") == window_id), None)
+
+
+def put_chrome_away(arm: str, where: dict) -> bool:
+    """Minimize or hide Chrome without bringing it forward; True once its window left the screen."""
+    session = f"away-{arm}"
+    call("start_session", {"session": session})
+    try:
+        if arm == "minimized":
+            elements = structured(call("get_window_state", {**where, "session": session, "tree_format": "elements"})).get("elements") or []
+            button = next((e for e in elements if e.get("subrole") == "AXMinimizeButton" or "minimize" in str(e.get("label", "")).lower()), None)
+            if not button:
+                print("no minimize button:", [(e.get("role"), e.get("subrole"), e.get("label")) for e in elements][:30])
+                return False
+            print("minimize:", json.dumps(call("click", {**where, "session": session, "element_token": button["element_token"]}))[:300])
+        else:
+            print("hide:", json.dumps(call("hotkey", {**where, "session": session, "keys": ["cmd", "h"]}))[:300])
+        for _ in range(20):
+            time.sleep(0.5)
+            if chrome_window_listed(where["window_id"], True) is None:
+                return True
+        if arm == "hidden":
+            script = 'tell application "System Events" to set visible of process "Google Chrome" to false'
+            print("hide through System Events:", run(["osascript", "-e", script], 20).stderr[:300])
+            time.sleep(2)
+        return chrome_window_listed(where["window_id"], True) is None
+    finally:
+        call("end_session", {"session": session})
+
+
 def web_area_present(session: str) -> bool:
     elements = structured(call("get_window_state", {**chrome_window(), "session": session, "tree_format": "elements"})).get("elements") or []
     return any(e.get("role") == "AXWebArea" or e.get("in_web_content") for e in elements)
@@ -379,10 +411,18 @@ def first_attach_cycles(cycles: int, phase, front_host) -> None:
             call("end_session", {"session": f"w{cycle}"})
         session = f"c{cycle}"
         where = {"session": session, **chrome_window()}
+        if arm in ("minimized", "hidden"):
+            away = put_chrome_away(arm, {k: where[k] for k in ("pid", "window_id")})
+            front_host()
+            seen = chrome_window_listed(where["window_id"], False) or {}
+            note = f"window off screen before={away} is_on_screen={seen.get('is_on_screen')} on_current_space={seen.get('on_current_space')}"
         call("start_session", {"session": session})
         reply, seen = phase(lambda: structured(call("browser_prepare", {**where, "strategy": {"kind": "existing_profile"}})), f"first-{arm}", cycle + 10)
         bound = bool(structured(call("get_browser_state", where)).get("target_id"))
         message = (reply.get("refusal") or {}).get("message", "")[:120]
+        if arm in ("minimized", "hidden"):
+            listed = chrome_window_listed(where["window_id"], True)
+            note += f" window off screen after={listed is None} code={(reply.get('refusal') or {}).get('code') or reply.get('status')}"
         if not bound:
             shot(f"{VARIANT}-{BUILD}-unbound-c{cycle}.png")
             print("unbound reply:", json.dumps(reply)[:6000])
@@ -435,7 +475,7 @@ def main() -> None:
             for at in (1.5, 4.0, 8.0, 11.0):
                 threading.Timer(at, shot, args=(f"{VARIANT}-{BUILD}-{name}-r{rep}-{at}s.png",)).start()
         typist = Typist() if TYPING else None
-        frames = Frames(f"{BUILD}-{name}-r{rep}") if FRAMES_ON and name.startswith("first-") else None
+        frames = Frames(f"{BUILD}-{name}-r{rep}") if FRAMES_ON and name.startswith(("first-", "attach_", "end_session")) else None
         out = fn()
         took = time.time() - t0
         time.sleep(SETTLE_S)
@@ -469,7 +509,9 @@ def main() -> None:
     cycles = int(os.environ.get("AB_CYCLES", "0"))
     if cycles:
         first_attach_cycles(cycles, phase, front_host)
-        return
+        if os.environ.get("AB_THEN_REPS") != "on":
+            return
+        restart_chrome()
     rows = []
     for rep in range(1, REPS + 1):
         session = f"s{rep}"
