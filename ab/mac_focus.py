@@ -520,43 +520,49 @@ def main() -> None:
         restart_chrome()
         print("host in front before the reps:", front_host())
     rows = []
-    for rep in range(1, REPS + 1):
-        session = f"s{rep}"
-        where = {"session": session, **chrome_window()}
-        call("start_session", {"session": session})
-        phases = {}
-        prepare = {**where, "strategy": {"kind": "existing_profile"}}
-        reply, phases["attach_background"] = phase(lambda: structured(call("browser_prepare", prepare)), "attach_background", rep)
-        outcome = reply.get("status") or (reply.get("refusal") or {}).get("code") or json.dumps(reply)[:300]
-        if (reply.get("refusal") or {}).get("code") == "background_unavailable":
-            reply, phases["attach_foreground"] = phase(lambda: structured(call("browser_prepare", {**prepare, "delivery_mode": "foreground"})), "attach_foreground", rep)
-            outcome += " -> foreground " + (reply.get("status") or json.dumps(reply)[:600])
-        effects = reply.get("side_effects") or (reply.get("detail") or {}).get("setup_side_effects") or {}
-        state = structured(call("get_browser_state", where))
-        bound = bool(state.get("target_id"))
-        if not bound:
-            print(f"unbound rep {rep} bind reply:", json.dumps(state)[:6000])
-            for wait in (1, 3):
-                time.sleep(wait)
-                again = structured(call("get_browser_state", where))
-                print(f"unbound rep {rep} bind again after {wait}s:", json.dumps(again)[:3000])
-                if again.get("target_id"):
-                    break
-        if not bound and rep == 1:
-            shot(f"unbound-{VARIANT}-{BUILD}.png")
-            print("prepare reply:", json.dumps(reply)[:8000])
-            tree = structured(call("get_window_state", {**where, "session": "reader", "tree_format": "elements"})).get("elements") or []
-            print("chrome tree after refusal:", [(e.get("role"), str(e.get("label") or "")[:40]) for e in tree][:80])
-        tab = next((t["tab_id"] for t in state.get("tabs", []) if t.get("active")), None)
-        if tab:
-            _, phases["act"] = phase(lambda: call("browser_navigate", {**where, "target_id": state["target_id"], "tab_id": tab, "url": f"https://example.com/?rep={rep}"}), "act", rep)
-        ended, phases["end_session"] = phase(lambda: structured(call("end_session", {"session": session})), "end_session", rep)
-        done = sorted(k for k, v in effects.items() if v is True)
-        print(f"rep {rep}: {outcome} bound={bound} endpoint={(reply.get('endpoint_ownership') or {}).get('detail')!r} side_effects={done} end={json.dumps(ended)[:200]}")
-        dump_trace(f"rep {rep}")
-        for name, seen in phases.items():
-            print(f"  {name}: {json.dumps(seen)}")
-        rows.append(phases)
+    rounds = int(os.environ.get("AB_ROUNDS") or "1")
+    for round_no in range(rounds):
+        if round_no:
+            restart_chrome()
+            front_host()
+            phase(lambda: time.sleep(2), "control", 0)
+        for rep in range(1, REPS + 1):
+            session = f"s{round_no}x{rep}"
+            where = {"session": session, **chrome_window()}
+            call("start_session", {"session": session})
+            phases = {}
+            prepare = {**where, "strategy": {"kind": "existing_profile"}}
+            reply, phases["attach_background"] = phase(lambda: structured(call("browser_prepare", prepare)), "attach_background", rep)
+            outcome = reply.get("status") or (reply.get("refusal") or {}).get("code") or json.dumps(reply)[:300]
+            if (reply.get("refusal") or {}).get("code") == "background_unavailable":
+                reply, phases["attach_foreground"] = phase(lambda: structured(call("browser_prepare", {**prepare, "delivery_mode": "foreground"})), "attach_foreground", rep)
+                outcome += " -> foreground " + (reply.get("status") or json.dumps(reply)[:600])
+            effects = reply.get("side_effects") or (reply.get("detail") or {}).get("setup_side_effects") or {}
+            state = structured(call("get_browser_state", where))
+            bound = bool(state.get("target_id"))
+            if not bound:
+                print(f"unbound rep {rep} bind reply:", json.dumps(state)[:6000])
+                for wait in (1, 3):
+                    time.sleep(wait)
+                    again = structured(call("get_browser_state", where))
+                    print(f"unbound rep {rep} bind again after {wait}s:", json.dumps(again)[:3000])
+                    if again.get("target_id"):
+                        break
+            if not bound and rep == 1:
+                shot(f"unbound-{VARIANT}-{BUILD}.png")
+                print("prepare reply:", json.dumps(reply)[:8000])
+                tree = structured(call("get_window_state", {**where, "session": "reader", "tree_format": "elements"})).get("elements") or []
+                print("chrome tree after refusal:", [(e.get("role"), str(e.get("label") or "")[:40]) for e in tree][:80])
+            tab = next((t["tab_id"] for t in state.get("tabs", []) if t.get("active")), None)
+            if tab:
+                _, phases["act"] = phase(lambda: call("browser_navigate", {**where, "target_id": state["target_id"], "tab_id": tab, "url": f"https://example.com/?rep={rep}"}), "act", rep)
+            ended, phases["end_session"] = phase(lambda: structured(call("end_session", {"session": session})), "end_session", rep)
+            done = sorted(k for k, v in effects.items() if v is True)
+            print(f"rep {rep}: {outcome} bound={bound} endpoint={(reply.get('endpoint_ownership') or {}).get('detail')!r} side_effects={done} end={json.dumps(ended)[:200]}")
+            dump_trace(f"rep {rep}")
+            for name, seen in phases.items():
+                print(f"  {name}: {json.dumps(seen)}")
+            rows.append(phases)
 
     lines = [
         f"### {VARIANT} / build {BUILD} / typing {'on' if TYPING else 'off'}",

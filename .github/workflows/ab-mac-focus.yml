@@ -24,13 +24,11 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { build: P, mode: checks, arms: none, trial: 1, checks: "on" }
-          - { build: F, mode: probe, arms: "off", cycles: "30", shots: "on", trial: 1 }
-          - { build: G, mode: probe, arms: "off", cycles: "30", shots: "on", trial: 1 }
-          - { build: F, mode: probe, arms: "off", cycles: "30", shots: "on", trial: 2 }
-          - { build: G, mode: probe, arms: "off", cycles: "30", shots: "on", trial: 2 }
-          - { build: F, mode: probe, arms: "off", cycles: "30", shots: "on", trial: 3 }
-          - { build: G, mode: probe, arms: "off", cycles: "30", shots: "on", trial: 3 }
+          - { build: P, mode: checks, arms: none, trial: 1, checks: "on", failbefore: "on" }
+          - { build: F, mode: probe, arms: rounds, cycles: "0", reps: "on", rounds: "20", trial: 1 }
+          - { build: G, mode: probe, arms: rounds, cycles: "0", reps: "on", rounds: "20", trial: 1 }
+          - { build: F, mode: probe, arms: rounds, cycles: "0", reps: "on", rounds: "20", trial: 2 }
+          - { build: G, mode: probe, arms: rounds, cycles: "0", reps: "on", rounds: "20", trial: 2 }
           - { build: P, mode: e2e, arms: lane, trial: 1 }
     steps:
       - uses: actions/checkout@v4
@@ -87,6 +85,8 @@ jobs:
           AB_THEN_REPS: ${{ matrix.reps }}
           AB_FRAMES: ${{ matrix.frames }}
           AB_SHOTS: ${{ matrix.shots }}
+          AB_ROUNDS: ${{ matrix.rounds }}
+          REPS: ${{ matrix.rounds && '1' || '5' }}
         run: |
           set -euo pipefail
           script="$SRC/scripts/ci/macos/ab-run.sh"
@@ -117,6 +117,18 @@ jobs:
           cd "$SRC/libs/cua-driver/rust"
           rustup component add clippy
           CARGO_TARGET_DIR="$RUNNER_TEMP/target" cargo clippy --locked --workspace --all-targets -- -D warnings
+      - name: The new test, then without the grace
+        if: ${{ !cancelled() && matrix.failbefore == 'on' }}
+        run: |
+          cd "$SRC/libs/cua-driver/rust"
+          t=setup_approves_the_port_file_a_new_listener_writes_just_after_listening
+          f=crates/platform-macos/src/browser/platform.rs
+          CARGO_TARGET_DIR="$RUNNER_TEMP/target" cargo test --locked -p platform-macos --lib "$t" 2>&1 | tail -6
+          sed -i '' 's/const ACTIVE_PORT_FILE_GRACE: Duration = Duration::from_millis(500);/const ACTIVE_PORT_FILE_GRACE: Duration = Duration::from_millis(0);/; s|tokio::time::sleep(ACTIVE_PORT_FILE_GRACE / 2).await;|tokio::time::sleep(Duration::from_millis(250)).await;|' "$f"
+          git diff --stat -- "$f"
+          git diff -- "$f" | grep '^[+-] ' || true
+          CARGO_TARGET_DIR="$RUNNER_TEMP/target" cargo test --locked -p platform-macos --lib "$t" 2>&1 | tail -30 || true
+          git checkout -- "$f"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
