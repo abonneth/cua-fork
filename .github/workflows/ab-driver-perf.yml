@@ -19,10 +19,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - label: L
-            sha: 3f56a9da0bbc59aea1c5dd3bfa3713a524e85a13
-          - label: Z
-            sha: 6f39afad8563c66cad4c7147f17ee4d067b16567
+          - label: N
+            sha: 1f037e43972dc7b1ff1935bd9f3f4eaa63532e25
     steps:
       - name: Build for aarch64-apple-darwin
         run: |
@@ -45,38 +43,3 @@ jobs:
           path: ${{ runner.temp }}/bin
           retention-days: 3
 
-  check:
-    name: tests ${{ matrix.label }}
-    runs-on: macos-26-intel
-    timeout-minutes: 150
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - label: L
-            ref: fix/macos-screencapturekit-owner
-          - label: Z
-            ref: perf/macos-display-plan-cache
-    steps:
-      - name: Source
-        run: |
-          set -euo pipefail
-          src="$RUNNER_TEMP/src"
-          git init -q "$src"
-          git -C "$src" remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
-          git -C "$src" fetch -q --depth 1 origin "${{ matrix.ref }}"
-          git -C "$src" checkout -q --force FETCH_HEAD
-          git -C "$src" log --oneline -1
-      - name: Format
-        run: |
-          cd "$RUNNER_TEMP/src/libs/cua-driver/rust"
-          rustup component add rustfmt clippy
-          cargo fmt --all -- --check
-      - name: Tests
-        run: |
-          cd "$RUNNER_TEMP/src/libs/cua-driver/rust"
-          CARGO_TARGET_DIR="$RUNNER_TEMP/target" cargo test --locked -p platform-macos --lib 2>&1 | tail -15
-      - name: Clippy
-        run: |
-          cd "$RUNNER_TEMP/src/libs/cua-driver/rust"
-          CARGO_TARGET_DIR="$RUNNER_TEMP/target" cargo clippy --locked --workspace --all-targets -- -D warnings 2>&1 | tail -20
