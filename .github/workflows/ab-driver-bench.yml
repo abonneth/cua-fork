@@ -1,0 +1,54 @@
+name: ab-driver-bench
+
+on:
+  push:
+    branches: [ab/driver-bench]
+
+env:
+  BIN_RUN: "43429285249"
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+
+jobs:
+  bench:
+    name: bench ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-26, macos-15]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Binaries
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/bin"
+          for label in M L X Y Z; do
+            gh run download "$BIN_RUN" --repo "$GITHUB_REPOSITORY" -n "bin-arm64-$label" -D "$RUNNER_TEMP/dl-$label"
+            cp "$RUNNER_TEMP/dl-$label/cua-driver-$label" "$RUNNER_TEMP/bin/"
+          done
+          chmod +x "$RUNNER_TEMP"/bin/*
+          for binary in "$RUNNER_TEMP"/bin/*; do codesign -s - -f "$binary"; done
+          shasum "$RUNNER_TEMP"/bin/*
+          sw_vers; sysctl -n hw.model machdep.cpu.brand_string
+          system_profiler SPDisplaysDataType | grep -E "Resolution|UI Looks" || true
+      - name: Desktop capture time, the leak fix against one encode and the kept filter
+        env:
+          AB_BINS: ${{ runner.temp }}/bin
+        run: |
+          for round in 1 2; do python3 -u ab/perf_ab.py X,Y,Z 40 || echo "exited $?"; done
+          AB_OVERLAY=on python3 -u ab/perf_ab.py X,Y,Z 40 || echo "exited $?"
+          AB_ARGS='{"max_image_dimension":0}' python3 -u ab/perf_ab.py X,Y,Z 20 || echo "exited $?"
+      - name: Two daemons from one executable, main against the claim
+        env:
+          AB_BINS: ${{ runner.temp }}/bin
+          AB_HOLD: "30"
+        run: |
+          for pair in "M:desktop M:desktop" "L:desktop L:desktop" "M:window M:window" "L:window L:window"; do
+            echo "== $pair"
+            python3 -u ab/storm.py $pair || echo "exited $?"
+          done
+          echo "== L:desktop L:desktop, the first one exits"
+          AB_KILL=first AB_HOLD=10 python3 -u ab/storm.py L:desktop L:desktop || echo "exited $?"
