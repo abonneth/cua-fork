@@ -20,9 +20,9 @@ jobs:
       matrix:
         include:
           - label: L
-            sha: 82a379dde811be204df313732584580acf9d883e
+            sha: 3f56a9da0bbc59aea1c5dd3bfa3713a524e85a13
           - label: Z
-            sha: f58433c84d6fd9bb3a965f74e2d17bc8266f4a9e
+            sha: 6f39afad8563c66cad4c7147f17ee4d067b16567
     steps:
       - name: Build for aarch64-apple-darwin
         run: |
@@ -53,6 +53,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - label: L
+            ref: fix/macos-screencapturekit-owner
           - label: Z
             ref: perf/macos-display-plan-cache
     steps:
