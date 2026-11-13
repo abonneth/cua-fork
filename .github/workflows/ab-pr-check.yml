@@ -19,14 +19,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { pr: "7549", os: macos-26-intel, tests: "-p platform-macos --lib" }
-          - { pr: "7410", os: macos-26-intel, tests: "-p platform-macos --lib" }
-          - { pr: "7482", os: macos-26-intel, tests: "-p platform-macos -p cua-driver-core --lib" }
-          - { pr: "7150", os: macos-26-intel, tests: "-p cua-driver --bins" }
-          - { pr: "7150", os: windows-11-arm, tests: "-p cua-driver --bins" }
-          - { pr: "7378", os: windows-11-arm, tests: "-p platform-windows --lib" }
-          - { pr: "7379", os: windows-11-arm, tests: "-p platform-windows --lib" }
-          - { pr: "6757", os: windows-11-arm, tests: "-p platform-windows --lib" }
+          - { pr: "main", os: windows-11-arm, tests: "-p cua-driver --bins active_perception_extension" }
     steps:
       - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5
         with:
