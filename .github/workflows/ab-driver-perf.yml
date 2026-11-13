@@ -1,0 +1,92 @@
+name: ab-driver-perf
+
+on:
+  push:
+    branches: [ab/driver-perf]
+
+env:
+  CARGO_NET_RETRY: "10"
+  CARGO_INCREMENTAL: "0"
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+
+jobs:
+  build:
+    name: arm64 ${{ matrix.label }}
+    runs-on: macos-15-intel
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: M
+            sha: f4c72198c0e2f642b52c9cb0253c8da9d188116c
+          - label: L
+            sha: ae35fc6bfa669f89f71127573c0ca984b254d1f2
+          - label: X
+            sha: 7759de89e0
+          - label: Y
+            sha: db8c07384e
+          - label: Z
+            sha: d805284276
+    steps:
+      - name: Build for aarch64-apple-darwin
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/src"
+          git init -q "$src"
+          git -C "$src" remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          sha=$(git ls-remote "https://github.com/${GITHUB_REPOSITORY}.git" | awk -v s="${{ matrix.sha }}" 'index($1, s) == 1 {print $1; exit}')
+          sha="${sha:-${{ matrix.sha }}}"
+          git -C "$src" fetch -q --depth 1 origin "$sha"
+          git -C "$src" checkout -q --force FETCH_HEAD
+          git -C "$src" log --oneline -1
+          cd "$src/libs/cua-driver/rust"
+          rustup target add aarch64-apple-darwin
+          mkdir -p "$RUNNER_TEMP/bin"
+          CARGO_TARGET_DIR="$RUNNER_TEMP/target" cargo build --locked --release --target aarch64-apple-darwin -p cua-driver 2>&1 | tail -3
+          cp "$RUNNER_TEMP/target/aarch64-apple-darwin/release/cua-driver" "$RUNNER_TEMP/bin/cua-driver-${{ matrix.label }}"
+          shasum "$RUNNER_TEMP"/bin/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bin-arm64-${{ matrix.label }}
+          path: ${{ runner.temp }}/bin
+          retention-days: 3
+
+  check:
+    name: tests ${{ matrix.label }}
+    runs-on: macos-26-intel
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: L
+            ref: fix/macos-screencapturekit-owner
+          - label: Y
+            ref: perf/macos-desktop-capture-single-pass
+          - label: Z
+            ref: perf/macos-display-plan-cache
+    steps:
+      - name: Source
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/src"
+          git init -q "$src"
+          git -C "$src" remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git -C "$src" fetch -q --depth 1 origin "${{ matrix.ref }}"
+          git -C "$src" checkout -q --force FETCH_HEAD
+          git -C "$src" log --oneline -1
+      - name: Format
+        run: |
+          cd "$RUNNER_TEMP/src/libs/cua-driver/rust"
+          rustup component add rustfmt clippy
+          cargo fmt --all -- --check
+      - name: Tests
+        run: |
+          cd "$RUNNER_TEMP/src/libs/cua-driver/rust"
+          CARGO_TARGET_DIR="$RUNNER_TEMP/target" cargo test --locked -p platform-macos --lib 2>&1 | tail -15
+      - name: Clippy
+        run: |
+          cd "$RUNNER_TEMP/src/libs/cua-driver/rust"
+          CARGO_TARGET_DIR="$RUNNER_TEMP/target" cargo clippy --locked --workspace --all-targets -- -D warnings 2>&1 | tail -20
