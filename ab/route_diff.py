@@ -18,7 +18,7 @@ for build in builds:
 
 def shot(build, name):
     path = work / f"{name}.png"
-    done = subprocess.run([str(BINS / f"cua-driver-{build}"), "call", "--socket", daemons[build][1], "get_desktop_state", json.dumps({"screenshot_out_file": str(path), "max_image_dimension": 0})], capture_output=True, text=True, timeout=60, env=ENV)
+    done = subprocess.run([str(BINS / f"cua-driver-{build}"), "call", "--socket", daemons[build][1], "get_desktop_state", json.dumps({"screenshot_out_file": str(path), **json.loads(os.environ.get("AB_ARGS", '{"max_image_dimension": 0}'))})], capture_output=True, text=True, timeout=60, env=ENV)
     assert done.returncode == 0, done.stdout + done.stderr
     return Image.open(path).convert("RGB")
 
@@ -33,9 +33,10 @@ def compare(label, left, right):
         print(f"{label}: {left.size[0]}x{left.size[1]}, 0 pixels differ")
         return
     mask = diff.convert("L").point(lambda value: 255 if value else 0)
-    differing = sum(1 for value in mask.getdata() if value)
+    differing = mask.histogram()[255]
     extrema = [channel[1] for channel in diff.getextrema()]
-    print(f"{label}: {left.size[0]}x{left.size[1]}, {differing} pixels differ, inside box {box}, largest channel difference {max(extrema)}")
+    small = diff.convert("L").point(lambda value: 255 if 0 < value <= 3 else 0).histogram()[255]
+    print(f"{label}: {left.size[0]}x{left.size[1]}, {differing} pixels differ, inside box {box}, largest channel difference {max(extrema)}, {small} of them by 3 or less in luma")
 
 
 try:
