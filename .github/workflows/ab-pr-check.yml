@@ -1,0 +1,63 @@
+name: ab-pr-check
+
+on:
+  push:
+    branches: [ab/pr-check]
+
+env:
+  CARGO_NET_RETRY: "10"
+  CARGO_INCREMENTAL: "0"
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+
+jobs:
+  check:
+    name: "${{ matrix.pr }} ${{ matrix.os }}"
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { pr: "7549", os: macos-26-intel, tests: "-p platform-macos --lib" }
+          - { pr: "7410", os: macos-26-intel, tests: "-p platform-macos --lib" }
+          - { pr: "7482", os: macos-26-intel, tests: "-p platform-macos -p cua-driver-core --lib" }
+          - { pr: "7150", os: macos-26-intel, tests: "-p cua-driver --bins" }
+          - { pr: "7150", os: windows-11-arm, tests: "-p cua-driver --bins" }
+          - { pr: "7378", os: windows-11-arm, tests: "-p platform-windows --lib" }
+          - { pr: "7379", os: windows-11-arm, tests: "-p platform-windows --lib" }
+          - { pr: "6757", os: windows-11-arm, tests: "-p platform-windows --lib" }
+    steps:
+      - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5
+        with:
+          toolchain: "1.97.1"
+          components: clippy, rustfmt
+      - name: Source
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/src"
+          git init -q "$src"
+          git -C "$src" remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          branch="check/${{ matrix.pr }}"
+          if [[ "${{ matrix.pr }}" == 7378 ]]; then branch="fix/consent-ignores-other-bubbles"; fi
+          git -C "$src" fetch -q --depth 1 origin "$branch"
+          git -C "$src" checkout -q --force FETCH_HEAD
+          git -C "$src" log -1 --format='%H %s'
+      - name: Format
+        shell: bash
+        run: cd "$RUNNER_TEMP/src/libs/cua-driver/rust" && cargo fmt --all -- --check
+      - name: Tests
+        if: always()
+        shell: bash
+        run: |
+          cd "$RUNNER_TEMP/src/libs/cua-driver/rust"
+          cargo test --locked ${{ matrix.tests }} 2>&1 | tail -40
+          exit "${PIPESTATUS[0]}"
+      - name: Clippy
+        if: always()
+        shell: bash
+        run: |
+          cd "$RUNNER_TEMP/src/libs/cua-driver/rust"
+          cargo clippy --locked --workspace --all-targets -- -D warnings 2>&1 | tail -40
+          exit "${PIPESTATUS[0]}"
