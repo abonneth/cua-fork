@@ -19,16 +19,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - label: M
-            sha: f4c72198c0e2f642b52c9cb0253c8da9d188116c
           - label: L
-            sha: ae35fc6bfa669f89f71127573c0ca984b254d1f2
-          - label: X
-            sha: 7759de89e0413623b3449d0b353e9b69c7e78335
-          - label: Y
-            sha: db8c07384ec9551b72cf2ffac8aab30d7d3f7305
+            sha: 82a379dde811be204df313732584580acf9d883e
           - label: Z
-            sha: d805284276c05339d954f007b3342297a35c9a32
+            sha: f58433c84d6fd9bb3a965f74e2d17bc8266f4a9e
     steps:
       - name: Build for aarch64-apple-darwin
         run: |
@@ -59,10 +53,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - label: L
-            ref: fix/macos-screencapturekit-owner
-          - label: Y
-            ref: perf/macos-desktop-capture-single-pass
           - label: Z
             ref: perf/macos-display-plan-cache
     steps:
