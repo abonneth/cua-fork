@@ -19,7 +19,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { pr: "main", os: windows-11-arm, tests: "-p cua-driver --bins active_perception_extension" }
+          - { pr: "win-test", os: windows-11-arm, tests: "-p cua-driver --bins" }
     steps:
       - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5
         with:
