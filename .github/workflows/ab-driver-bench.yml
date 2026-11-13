@@ -46,6 +46,8 @@ jobs:
           AB_BINS: ${{ runner.temp }}/bin
           AB_HOLD: "30"
         run: |
+          printf 'two daemons\n%.0s' {1..40} > "$RUNNER_TEMP/note.txt"
+          open -a TextEdit "$RUNNER_TEMP/note.txt" && sleep 8
           for pair in "M:desktop M:desktop" "L:desktop L:desktop" "M:window M:window" "L:window L:window"; do
             echo "== $pair"
             python3 -u ab/storm.py $pair || echo "exited $?"
