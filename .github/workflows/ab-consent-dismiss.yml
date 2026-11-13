@@ -1,0 +1,65 @@
+name: ab-consent-dismiss
+
+on:
+  push:
+    branches: [ab/consent-dismiss]
+
+env:
+  A_REF: 724b6e1b4d45b83cfdfaff855e420d427b11edc4
+  CARGO_NET_RETRY: "10"
+  CARGO_INCREMENTAL: "0"
+
+jobs:
+  dismiss:
+    name: dismiss ${{ matrix.build }}
+    runs-on: windows-11-arm
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        build: [A]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build ${{ matrix.build }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/src"
+          git clone --quiet --filter=blob:none --no-checkout https://github.com/trycua/cua "$src"
+          ref_var="${{ matrix.build }}_REF"
+          git -C "$src" fetch --quiet https://github.com/abonneth/cua-fork "${!ref_var}" || true
+          git -C "$src" checkout --quiet --force "${!ref_var}"
+          cd "$src/libs/cua-driver/rust"
+          cargo build --locked --release -p cua-driver
+          ./target/release/cua-driver.exe --version
+          echo "DRIVER=$(cygpath -w "$PWD/target/release/cua-driver.exe")" >> "$GITHUB_ENV"
+      - name: Edge default profile with remote debugging on
+        shell: pwsh
+        run: |
+          $edge = "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe"
+          (Get-Item $edge).VersionInfo.ProductVersion
+          "EDGE=$edge" >> $env:GITHUB_ENV
+          $state = "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Local State"
+          Start-Process $edge -ArgumentList '--no-first-run', '--no-default-browser-check', 'about:blank'
+          foreach ($i in 1..60) { if (Test-Path $state) { break }; Start-Sleep 1 }
+          Start-Sleep 5
+          Get-Process msedge -ErrorAction SilentlyContinue | Stop-Process -Force
+          Start-Sleep 3
+          $json = Get-Content $state -Raw | ConvertFrom-Json
+          if (-not $json.devtools) { $json | Add-Member devtools ([pscustomobject]@{}) }
+          $json.devtools | Add-Member remote_debugging ([pscustomobject]@{ 'user-enabled' = $true }) -Force
+          $json | ConvertTo-Json -Depth 100 -Compress | Set-Content $state -Encoding utf8
+          (Get-Content $state -Raw | ConvertFrom-Json).devtools | ConvertTo-Json -Compress
+      - name: A person cancels the prompt
+        working-directory: ab
+        shell: pwsh
+        run: |
+          Get-Process WWAHost, SearchHost, StartMenuExperienceHost -ErrorAction SilentlyContinue | Stop-Process -Force; Start-Sleep 2
+          Start-Process $env:EDGE -ArgumentList '--no-first-run', '--no-default-browser-check', 'https://example.com'
+          Start-Sleep 10
+          pip install -q comtypes
+          python consent_dismiss.py $env:DRIVER "${{ matrix.build }}"
