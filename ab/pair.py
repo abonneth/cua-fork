@@ -28,9 +28,14 @@ def case(label, first, second, gap=4.0):
 
 B1 = "bundles/one/Probe.app/Contents/MacOS/two_clients"
 B2 = "bundles/two/Probe.app/Contents/MacOS/two_clients"
+NESTED = "bundles/one/Probe.app/Contents/Resources/inner/bin/two_clients"
+HELPER = "bundles/one/Probe.app/Contents/Helpers/two_clients"
 for _ in range(int(sys.argv[1]) if len(sys.argv) > 1 else 1):
     case("same path, no bundle", "./two_clients", "./two_clients")
+    case("same path, embedded __info_plist", "./two_clients_plist", "./two_clients_plist")
+    case("same path, in .app/Contents/Resources", NESTED, NESTED)
+    case("same path, in .app/Contents/Helpers", HELPER, HELPER)
     case("two paths, no bundle", "./two_clients", "./two_clients_copy")
     case("two paths, same bundle id", B1, B2)
-    case("same path, in a bundle", B1, B1)
+    case("same path, .app/Contents/MacOS", B1, B1)
 settle()

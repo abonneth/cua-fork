@@ -6,6 +6,7 @@ on:
 
 env:
   BIN_RUN: "43429285249"
+  BIN_RUN_HEADS: "43449150830"
   CUA_TELEMETRY: "0"
   DO_NOT_TRACK: "1"
 
@@ -26,7 +27,8 @@ jobs:
         run: |
           mkdir -p "$RUNNER_TEMP/bin"
           for label in M L X Y Z; do
-            gh run download "$BIN_RUN" --repo "$GITHUB_REPOSITORY" -n "bin-arm64-$label" -D "$RUNNER_TEMP/dl-$label"
+            run="$BIN_RUN"; case "$label" in L|Z) run="$BIN_RUN_HEADS";; esac
+            gh run download "$run" --repo "$GITHUB_REPOSITORY" -n "bin-arm64-$label" -D "$RUNNER_TEMP/dl-$label"
             cp "$RUNNER_TEMP/dl-$label/cua-driver-$label" "$RUNNER_TEMP/bin/"
           done
           chmod +x "$RUNNER_TEMP"/bin/*
@@ -54,3 +56,26 @@ jobs:
           done
           echo "== L:desktop L:desktop, the first one exits"
           AB_KILL=first AB_HOLD=10 python3 -u ab/storm.py L:desktop L:desktop || echo "exited $?"
+      - name: A window that opens, moves away and closes after the filter was built
+        env:
+          AB_BINS: ${{ runner.temp }}/bin
+        run: |
+          swiftc -O ab/magenta_win.swift -o ab/magenta_win
+          python3 -m venv "$RUNNER_TEMP/venv" && "$RUNNER_TEMP/venv/bin/pip" -q install pillow
+          for build in X Z; do "$RUNNER_TEMP/venv/bin/python" -u ab/kept_filter_e2e.py $build || echo "exited $?"; done
+      - name: Memory over 150 desktop captures
+        env:
+          AB_CALLS: "150"
+        run: |
+          for build in X Z; do python3 -u ab/mac_mem.py "$RUNNER_TEMP/bin/cua-driver-$build" $build | grep -E "SUMMARY|150x|idle" | cut -c1-240 || echo "exited $?"; done
+      - name: What replayd keys a client on
+        run: |
+          ab/pair_setup.sh
+          cd ab && python3 -u pair.py 2 || echo "exited $?"
+      - name: Desktop screenshot of main against the content-filter route, pixel by pixel
+        env:
+          AB_BINS: ${{ runner.temp }}/bin
+        run: |
+          "$RUNNER_TEMP/venv/bin/python" -u ab/route_diff.py M,X || echo "exited $?"
+          "$RUNNER_TEMP/venv/bin/python" -u ab/route_diff.py X,Z || echo "exited $?"
+          "$RUNNER_TEMP/venv/bin/python" -u ab/route_diff.py M,Z || echo "exited $?"
