@@ -19,9 +19,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { pr: "win-test", os: windows-11-arm, tests: "-p cua-driver --bins" }
-          - { pr: "win-test", os: macos-15-intel, tests: "-p platform-macos --lib security_prompt" }
-          - { pr: "win-test", os: macos-26-intel, tests: "-p platform-macos --lib security_prompt" }
+          - { pr: "7482", os: macos-26-intel, tests: "-p platform-macos -p cua-driver-core --lib" }
+          - { pr: "7639", os: macos-26-intel, tests: "-p platform-macos --lib" }
+          - { pr: "7640", os: macos-26-intel, tests: "-p platform-macos --lib" }
+          - { pr: "7678", os: macos-26-intel, tests: "-p cua-driver-core --lib" }
+          - { pr: "7631", os: macos-26-intel, tests: "-p platform-macos --lib" }
+          - { pr: "7631", os: windows-11-arm, tests: "-p cua-driver --bins" }
     steps:
       - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5
         with:
@@ -35,7 +38,6 @@ jobs:
           git init -q "$src"
           git -C "$src" remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
           branch="check/${{ matrix.pr }}"
-          if [[ "${{ matrix.pr }}" == 7378 ]]; then branch="fix/consent-ignores-other-bubbles"; fi
           git -C "$src" fetch -q --depth 1 origin "$branch"
           git -C "$src" checkout -q --force FETCH_HEAD
           git -C "$src" log -1 --format='%H %s'
