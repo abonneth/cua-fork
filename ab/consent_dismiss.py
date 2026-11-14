@@ -34,7 +34,9 @@ def outcome(reply: dict) -> str:
     refusal = body.get("refusal")
     if refusal:
         return f"`{refusal.get('code')}`: {refusal.get('message')}"
-    return "bound" if body.get("target_id") else f"status={body.get('status')}, keys={sorted(body)[:8]}"
+    if body.get("target_id"):
+        return "bound"
+    return "attached" if body.get("action") else f"status={body.get('status')}"
 
 
 def edge_window(daemon: Daemon) -> dict:
@@ -84,10 +86,10 @@ def press(button) -> bool:
 
 
 class Person:
-    """Presses `button` on the prompt `delay_ms` after seeing it: once, or on every prompt; `button=None` only watches."""
+    """Presses `button` on the prompt `delay_ms` after seeing it, on at most `presses` prompts; with `every` it keeps watching."""
 
-    def __init__(self, hwnd: int, button: str | None, delay_ms: int = 0, every: bool = False) -> None:
-        self.hwnd, self.button, self.delay_ms, self.every = hwnd, button, delay_ms, every
+    def __init__(self, hwnd: int, button: str | None, delay_ms: int = 0, every: bool = False, presses: int = 99) -> None:
+        self.hwnd, self.button, self.delay_ms, self.every, self.presses = hwnd, button, delay_ms, every, presses
         self.start = time.monotonic()
         self.seen: list[int] = []
         self.pressed: list[int] = []
@@ -122,7 +124,7 @@ class Person:
                 self.names = self.names or " | ".join(button.CurrentName for button in row)
             except GONE:
                 pass
-            if self.button is not None:
+            if self.button is not None and len(self.pressed) + self.missed < self.presses:
                 wait = seen + self.delay_ms - self.ms()
                 if wait > 0:
                     time.sleep(wait / 1000)
@@ -245,16 +247,18 @@ def retry_after_cancel() -> None:
         run.close()
 
 
-def reconnect(button: str | None) -> None:
+def reconnect(button: str | None, presses: int = 99) -> None:
+    acts = {None: "watches", 1: "cancels the first prompt only"}.get(button and presses, "cancels every prompt")
     for rep in range(1, REPS + 1):
-        run = Run(f"reconnect-{button}-{rep}")
+        run = Run(f"reconnect-{button}-{presses}-{rep}")
         bound, _ = run.prepare()
         before, _ = run.state()
         dropped = drop_sockets(run.daemon.process.pid)
         time.sleep(1)
-        person = Person(run.hwnd, button, 0, every=True)
+        person = Person(run.hwnd, button, 0, every=True, presses=presses)
         after, elapsed = run.state(person)
-        emit(f"| {outcome(bound)} / {outcome(before)} | {dropped} | {'cancels every prompt' if button else 'watches'}: {person.report()} | {outcome(after)} | {elapsed} | {run.close()} |")
+        again, _ = run.state()
+        emit(f"| {outcome(bound)} / {outcome(before)} | {dropped} | {acts}: {person.report()} | {outcome(after)} | {elapsed} | {outcome(again)} | {run.close()} |")
         print("RAW", json.dumps(structured(after))[:1500], flush=True)
 
 
@@ -264,9 +268,10 @@ def main() -> None:
     retry_after_cancel()
     answered_first("allow", [0, 200])
     emit("\n#### The bound socket is dropped, then `get_browser_state`\n")
-    emit("| attach / state before | sockets dropped | person | `get_browser_state` after | ms | prompt left |")
-    emit("|---|---|---|---|---|---|")
+    emit("| attach / state before | sockets dropped | person | `get_browser_state` after | ms | `get_browser_state` again | prompt left |")
+    emit("|---|---|---|---|---|---|---|")
     reconnect(None)
+    reconnect("cancel", 1)
     reconnect("cancel")
     with open(os.environ.get("GITHUB_STEP_SUMMARY", os.devnull), "a", encoding="utf-8") as out:
         out.write("\n".join(SUMMARY) + "\n")
