@@ -1650,7 +1650,8 @@ impl BrowserEngine {
                 }
             };
         let displayed_consent_prompt = displayed_consent_prompt || fresh_consent_prompt;
-        if let Err(_final_claim_error) = claimed {
+        if let Err(final_claim_error) = claimed {
+            let claim_error_text = format!("{final_claim_error:#} || {final_claim_error:?}");
             self.revoke_existing_profile_grant(
                 &request.session,
                 request.transport_session.as_deref(),
@@ -1665,6 +1666,7 @@ impl BrowserEngine {
                 .with_detail(serde_json::json!({
                     "retried_after_consent": initial_claim_error.is_some(),
                     "fresh_claim_failed": initial_claim_error.is_some(),
+                    "claim_error": claim_error_text,
                 })),
                 &setup,
                 displayed_consent_prompt,
