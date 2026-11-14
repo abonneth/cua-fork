@@ -6,12 +6,29 @@ on:
 
 env:
   A_REF: 724b6e1b4d45b83cfdfaff855e420d427b11edc4
-  P_REF: 2e341eeda7361e532450759705848da138d89caf
-  DELAYS_MS: "0,200,400"
+  B_REF: 5277e3830bbf09f940d4092a8eb3c30601445c34
   CARGO_NET_RETRY: "10"
   CARGO_INCREMENTAL: "0"
 
 jobs:
+  core:
+    name: core tests B
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5
+        with:
+          components: clippy, rustfmt
+      - name: Test, clippy, fmt
+        run: |
+          set -euo pipefail
+          git clone --quiet --filter=blob:none --no-checkout https://github.com/abonneth/cua-fork src
+          git -C src checkout --quiet --force "$B_REF"
+          cd src/libs/cua-driver/rust
+          cargo fmt --all -- --check
+          cargo test --locked -p cua-driver-core --lib 2>&1 | tail -15
+          cargo clippy --locked -p cua-driver-core --all-targets -- -D warnings 2>&1 | tail -5
+
   dismiss:
     name: dismiss ${{ matrix.build }}
     runs-on: windows-11-arm
@@ -19,7 +36,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        build: [P]
+        build: [A, B]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5
