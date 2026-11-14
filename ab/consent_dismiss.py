@@ -104,6 +104,8 @@ class Person:
             self.cancel = "pressed"
         except comtypes.COMError as error:
             self.cancel = f"prompt gone ({error.hresult & 0xFFFFFFFF:#x})"
+        except ValueError:
+            self.cancel = "prompt gone"
 
     def stop(self) -> None:
         self.running = False
@@ -114,7 +116,8 @@ def refusal(reply: dict) -> tuple[str, str]:
     text = json.dumps(reply)
     code = re.search(r'"(?:refusal_code|code)":\s*"([a-z_]+)"', text)
     message = re.search(r'"message":\s*"((?:[^"\\]|\\.)*)"', text)
-    return (code.group(1) if code else "-", (message.group(1) if message else text)[:230])
+    cause = re.search(r'claim_error\W+((?:[^"\\]|\\.)*)', text)
+    return (code.group(1) if code else "-", (message.group(1) if message else text)[:230] + (f" [claim error: {cause.group(1)[:400]}]" if cause else ""))
 
 
 def leftover_prompt(hwnd: int) -> bool:
@@ -127,7 +130,7 @@ def leftover_prompt(hwnd: int) -> bool:
         return False
     try:
         row[2].GetCurrentPattern(UIA.UIA_InvokePatternId).QueryInterface(UIA.IUIAutomationInvokePattern).Invoke()
-    except comtypes.COMError:
+    except (comtypes.COMError, ValueError):
         pass
     return True
 
@@ -145,6 +148,8 @@ def one(delay_ms: int | None, rep: int) -> dict:
         person.stop()
         bound = bool(structured(daemon.call("get_browser_state", where)).get("target_id"))
         code, message = ("-", "bound") if bound else refusal(prepared)
+        if not bound and rep == 1:
+            print("RAW", json.dumps(prepared)[:3000], flush=True)
         left = leftover_prompt(where["window_id"])
         daemon.call("end_session", {"session": name})
     finally:

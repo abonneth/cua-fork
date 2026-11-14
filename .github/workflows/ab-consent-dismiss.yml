@@ -6,6 +6,8 @@ on:
 
 env:
   A_REF: 724b6e1b4d45b83cfdfaff855e420d427b11edc4
+  P_REF: 2e341eeda7361e532450759705848da138d89caf
+  DELAYS_MS: "0,200,400"
   CARGO_NET_RETRY: "10"
   CARGO_INCREMENTAL: "0"
 
@@ -17,7 +19,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        build: [A]
+        build: [P]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5
