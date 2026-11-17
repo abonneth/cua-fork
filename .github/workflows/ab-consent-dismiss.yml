@@ -5,8 +5,8 @@ on:
     branches: [ab/consent-dismiss]
 
 env:
-  A_REF: 724b6e1b4d45b83cfdfaff855e420d427b11edc4
-  B_REF: 05bf34fd7f38788170b207be72b5e11276952541
+  A_REF: fcc16ebb629eb20a9f1279421185620ca14aa0e5
+  B_REF: 2500d80c49789426d8a7bc10d61b3e248934542b
   CARGO_NET_RETRY: "10"
   CARGO_INCREMENTAL: "0"
 
