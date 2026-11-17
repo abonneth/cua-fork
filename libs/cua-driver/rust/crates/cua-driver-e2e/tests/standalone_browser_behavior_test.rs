@@ -2679,7 +2679,6 @@ fn run_trusted_click_covered_ref(spec: &BrowserSpec) {
                 launch_browser_with_html(spec, &scenario, standalone_covered_click_html());
             *evidence = recording_evidence(fixture.driver.recording_dir());
             let session = format!("standalone-trusted-click-covered-{}", fixture.pid);
-            prepare_same_space_attachment(&mut fixture, &session);
             run_with_background_oracles(&mut fixture, |fixture| {
                 let (target, tab, snapshot) = bind(fixture, &session);
                 let click_ref = ref_by_label(&snapshot, "id=btn-increment");
