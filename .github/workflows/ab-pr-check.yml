@@ -19,6 +19,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          - { pr: "7150", os: macos-26-intel, tests: "-p cua-driver --bins" }
+          - { pr: "7150", os: windows-11-arm, tests: "-p cua-driver --bins" }
           - { pr: "7410", os: macos-26-intel, tests: "-p platform-macos --lib" }
           - { pr: "7482", os: macos-26-intel, tests: "-p platform-macos -p cua-driver-core --lib" }
           - { pr: "7639", os: macos-26-intel, tests: "-p platform-macos --lib" }
