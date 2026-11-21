@@ -9,6 +9,7 @@ env:
   SHA_A: e3b909029d8dc0d5a0c7269b3fac378eddb01e10
   SHA_Q: 2d712d9889ad6c67dc194bbfcd2498124112b1bb
   SHA_F: 5cd6d70b7677d12a4866912b39fb6bb6526d11ed
+  SHA_B: 711bb769f2a6162e723257b878d76a218877ebd2
   CUA_E2E_RETRY_ONCE: "1"
   CUA_TELEMETRY: "0"
   DO_NOT_TRACK: "1"
@@ -22,10 +23,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { build: F, mode: e2e, arms: lane, trial: 1 }
-          - { build: F, mode: probe, arms: "minimized,hidden", frames: "on", trial: 1 }
-          - { build: F, mode: probe, arms: "off", frames: "on", trial: 1 }
-          - { build: F, mode: probe, arms: reps, cycles: "0", reps: "on", frames: "on", trial: 1 }
+          - { build: F, mode: e2e, arms: one, trial: 1 }
+          - { build: F, mode: e2e, arms: one, trial: 2 }
+          - { build: B, mode: e2e, arms: one, trial: 1 }
+          - { build: B, mode: e2e, arms: one, trial: 2 }
     steps:
       - uses: actions/checkout@v4
       - name: Tools
@@ -38,6 +39,7 @@ jobs:
             A) sha="$SHA_A" ;;
             Q) sha="$SHA_Q" ;;
             F) sha="$SHA_F" ;;
+            B) sha="$SHA_B" ;;
           esac
           git clone --quiet --filter=blob:none --no-checkout https://github.com/trycua/cua "$src"
           git -C "$src" fetch --quiet https://github.com/abonneth/cua-fork "$sha" || git -C "$src" fetch --quiet origin "$sha"
@@ -51,9 +53,16 @@ jobs:
         continue-on-error: true
         env:
           CUA_E2E_INTERNAL_LANE: browser
+          AB_ONLY_TESTS: ${{ matrix.arms == 'one' && 'standalone_browser_generic_type_text_completion' || '' }}
         run: |
           set -euo pipefail
           cd "$SRC"
+          if [[ -n "$AB_ONLY_TESTS" ]]; then
+            perl -0pi -e 's/^(# shellcheck source=lib\/e2e-retry-once\.sh)/read -r -a tests <<< "\$\{AB_ONLY_TESTS\}"\n$1/m' scripts/ci/run-rust-standalone-browser-e2e.sh
+            grep -n 'AB_ONLY_TESTS' scripts/ci/run-rust-standalone-browser-e2e.sh
+            git update-index --skip-worktree scripts/ci/run-rust-standalone-browser-e2e.sh
+            [[ -z "$(git status --porcelain --untracked-files=normal)" ]]
+          fi
           GITHUB_EVENT_NAME=workflow_dispatch \
             CUA_E2E_SOURCE_SHA="$SRC_SHA" CUA_E2E_WORKFLOW_SHA="$SRC_SHA" \
             CARGO_TARGET_DIR="$RUNNER_TEMP/target" \
