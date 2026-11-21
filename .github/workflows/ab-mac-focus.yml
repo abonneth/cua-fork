@@ -8,7 +8,7 @@ on:
 env:
   SHA_A: e3b909029d8dc0d5a0c7269b3fac378eddb01e10
   SHA_Q: 2d712d9889ad6c67dc194bbfcd2498124112b1bb
-  SHA_F: 5cd6d70b7677d12a4866912b39fb6bb6526d11ed
+  SHA_F: 60b6925836049ddf8a2fb5885554227b1b0a73a7
   SHA_B: 711bb769f2a6162e723257b878d76a218877ebd2
   SHA_M: 0adc9a8d19fd94681c1ad4f7aa1b57b96c79c37f
   CUA_E2E_RETRY_ONCE: "1"
@@ -24,8 +24,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - { build: M, mode: e2e, arms: one, trial: 1 }
-          - { build: M, mode: e2e, arms: one, trial: 2 }
+          - { build: F, mode: e2e, arms: lane, trial: 1 }
+          - { build: F, mode: probe, arms: "minimized,hidden", frames: "on", trial: 1 }
+          - { build: F, mode: probe, arms: "off", frames: "on", trial: 1 }
+          - { build: F, mode: probe, arms: reps, cycles: "0", reps: "on", frames: "on", trial: 1 }
     steps:
       - uses: actions/checkout@v4
       - name: Tools
