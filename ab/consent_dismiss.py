@@ -64,6 +64,10 @@ def consent_row(uia, hwnd: int):
     for buttons in rows.values():
         if len(buttons) != 3:
             continue
+        named = {str(element.CurrentName).strip().lower(): element for _, _, element in buttons}
+        if len(named) == 3 and "allow" in named and "cancel" in named:
+            extra = next(element for name, element in named.items() if name not in ("allow", "cancel"))
+            return extra, named["allow"], named["cancel"]
         first, second, third = sorted(buttons, key=lambda button: button[0])
         if second[0] - first[1] > third[0] - second[1]:
             return first[2], second[2], third[2]
@@ -122,7 +126,10 @@ class Person:
             seen = self.ms()
             self.seen.append(round(seen))
             try:
-                self.names = self.names or " | ".join(button.CurrentName for button in row)
+                if not self.names:
+                    self.names = " | ".join(button.CurrentName for button in row)
+                    if self.button is not None:
+                        self.names += f" -> {row[2 if self.button == 'cancel' else 1].CurrentName}"
             except GONE:
                 pass
             if self.button is not None and len(self.pressed) + self.missed < self.presses:
@@ -143,7 +150,7 @@ class Person:
 
     def report(self) -> str:
         acted = f"pressed {self.button} at {self.pressed} ms" if self.button else "watched"
-        return f"prompt seen at {self.seen} ms, {acted}" + (f", prompt already gone {self.missed}x" if self.missed else "")
+        return f"prompt seen at {self.seen} ms, {acted} [{self.names}]" + (f", prompt already gone {self.missed}x" if self.missed else "")
 
 
 def clear_prompt(hwnd: int) -> bool:

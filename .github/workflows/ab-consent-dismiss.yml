@@ -14,7 +14,7 @@ jobs:
   dismiss:
     name: dismiss ${{ matrix.build }} chrome
     runs-on: windows-11-arm
-    timeout-minutes: 120
+    timeout-minutes: 300
     strategy:
       fail-fast: false
       matrix:
