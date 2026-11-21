@@ -1,0 +1,29 @@
+name: ab-checks
+on:
+  push:
+    branches: [ab/checks-readback]
+env:
+  SHA: 68996144b5e0617f05d39f2511c98d53b3a46e3c
+jobs:
+  checks:
+    runs-on: macos-26
+    steps:
+      - name: Source
+        run: |
+          set -euo pipefail
+          git clone --quiet --filter=blob:none --no-checkout https://github.com/trycua/cua src
+          git -C src fetch --quiet https://github.com/abonneth/cua-fork "$SHA"
+          git -C src checkout --quiet --force "$SHA"
+      - name: Format
+        working-directory: src/libs/cua-driver/rust
+        run: |
+          rustup component add clippy rustfmt
+          cargo fmt --all -- --check
+      - name: Tests
+        working-directory: src/libs/cua-driver/rust
+        run: |
+          set -euo pipefail
+          cargo test --locked -p cua-driver-core --lib 2>&1 | tail -25
+      - name: Clippy
+        working-directory: src/libs/cua-driver/rust
+        run: cargo clippy --locked -p cua-driver-core -p platform-macos --all-targets -- -D warnings
