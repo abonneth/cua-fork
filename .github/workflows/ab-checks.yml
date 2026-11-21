@@ -3,7 +3,7 @@ on:
   push:
     branches: [ab/checks-readback]
 env:
-  SHA: 68996144b5e0617f05d39f2511c98d53b3a46e3c
+  SHA: 5cd6d70b7677d12a4866912b39fb6bb6526d11ed
 jobs:
   checks:
     runs-on: macos-26
@@ -23,7 +23,8 @@ jobs:
         working-directory: src/libs/cua-driver/rust
         run: |
           set -euo pipefail
-          cargo test --locked -p cua-driver-core --lib 2>&1 | tail -25
+          cargo test --locked -p platform-macos --lib 2>&1 | tail -25
+          cargo test --locked -p cua-driver-core --lib browser:: 2>&1 | tail -25
       - name: Clippy
         working-directory: src/libs/cua-driver/rust
         run: cargo clippy --locked -p cua-driver-core -p platform-macos --all-targets -- -D warnings
