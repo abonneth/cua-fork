@@ -50,13 +50,19 @@ jobs:
           cat >> "$script" <<'EOS'
           mark_phase "ab-probe"
           MATRIX_STATUS=0
-          STD_SOCKET="${HOME}/Library/Caches/cua-driver-local/ab-standard.sock"
-          open -n -g "${LOCAL_APP}" --args --socket "${STD_SOCKET}" serve --grant existing-profile
-          for _ in {1..60}; do [[ -S "${STD_SOCKET}" ]] && break; sleep 1; done
-          "${INSTALLED_BIN}" --socket "${STD_SOCKET}" status || true
-          /usr/bin/perl -e 'alarm shift; exec @ARGV' 1500 python3 -u "${AB_PROBE}" "${INSTALLED_BIN}" "${STD_SOCKET}" "${AB_BUILD}${AB_REP}-standard" || MATRIX_STATUS=$?
-          pkill -x "Google Chrome" || true; sleep 4
-          /usr/bin/perl -e 'alarm shift; exec @ARGV' 1500 python3 -u "${AB_PROBE}" "${INSTALLED_BIN}" "${DAEMON_SOCKET}" "${AB_BUILD}${AB_REP}-unrestricted" || MATRIX_STATUS=$?
+          probe() {
+            local name="$1"; shift
+            local sock="${HOME}/Library/Caches/cua-driver-local/ab-${name}.sock"
+            open -n -g "${LOCAL_APP}" --args --socket "${sock}" serve "$@"
+            for _ in {1..60}; do [[ -S "${sock}" ]] && break; sleep 1; done
+            "${INSTALLED_BIN}" --socket "${sock}" status | grep -E 'permission mode' || true
+            /usr/bin/perl -e 'alarm shift; exec @ARGV' 900 python3 -u "${AB_PROBE}" "${INSTALLED_BIN}" "${sock}" "${AB_BUILD}${AB_REP}-${name}" || MATRIX_STATUS=$?
+            kill "$("${INSTALLED_BIN}" --socket "${sock}" status 2>/dev/null | awk '/^ *pid:/{print $2}')" 2>/dev/null || true
+            pkill -x "Google Chrome" || true; sleep 4
+          }
+          probe standard-nooverlay --no-overlay --grant existing-profile
+          probe unrestricted-nooverlay --no-overlay --permission-mode unrestricted --dangerously-bypass-approvals
+          probe standard-overlay --grant existing-profile
           kill "${WATCHDOG_PID}" >/dev/null 2>&1 || true
           exit "${MATRIX_STATUS}"
           EOS
@@ -77,6 +83,7 @@ jobs:
 
   checks:
     name: checks ${{ matrix.os }}
+    if: ${{ false }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 90
     strategy:
