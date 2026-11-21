@@ -8,10 +8,7 @@ on:
 env:
   SHA_A: e3b909029d8dc0d5a0c7269b3fac378eddb01e10
   SHA_Q: 2d712d9889ad6c67dc194bbfcd2498124112b1bb
-  SHA_F: ec1252c0ad4817a2cce8196e2b56aad7547f4284
-  SHA_G: dcabe885671173e6217bb992968021899d3f9f2d
-  SHA_P: 6e857c8655f45d73d8f814b180db6784a7ba508e
-  SHA_B: 36c576698e7265a84fb3469c8b9d2c9824df6931
+  SHA_F: 5cd6d70b7677d12a4866912b39fb6bb6526d11ed
   CUA_E2E_RETRY_ONCE: "1"
   CUA_TELEMETRY: "0"
   DO_NOT_TRACK: "1"
@@ -19,17 +16,16 @@ env:
 jobs:
   focus:
     name: ${{ matrix.build }} ${{ matrix.mode }} ${{ matrix.arms }} t${{ matrix.trial }}
-    runs-on: ${{ matrix.os || 'macos-26' }}
+    runs-on: macos-26
     timeout-minutes: ${{ matrix.mode == 'e2e' && 200 || 120 }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { build: F, mode: probe, arms: rounds, cycles: "0", reps: "on", rounds: "20", trial: 3, os: macos-26-intel }
-          - { build: G, mode: probe, arms: rounds, cycles: "0", reps: "on", rounds: "20", trial: 3, os: macos-26-intel }
-          - { build: F, mode: probe, arms: rounds, cycles: "0", reps: "on", rounds: "20", trial: 1 }
-          - { build: G, mode: probe, arms: rounds, cycles: "0", reps: "on", rounds: "20", trial: 1 }
-          - { build: P, mode: e2e, arms: lane, trial: 1 }
+          - { build: F, mode: e2e, arms: lane, trial: 1 }
+          - { build: F, mode: probe, arms: "minimized,hidden", frames: "on", trial: 1 }
+          - { build: F, mode: probe, arms: "off", frames: "on", trial: 1 }
+          - { build: F, mode: probe, arms: reps, cycles: "0", reps: "on", frames: "on", trial: 1 }
     steps:
       - uses: actions/checkout@v4
       - name: Tools
@@ -42,9 +38,6 @@ jobs:
             A) sha="$SHA_A" ;;
             Q) sha="$SHA_Q" ;;
             F) sha="$SHA_F" ;;
-            G) sha="$SHA_G" ;;
-            P) sha="$SHA_P" ;;
-            B) sha="$SHA_B" ;;
           esac
           git clone --quiet --filter=blob:none --no-checkout https://github.com/trycua/cua "$src"
           git -C "$src" fetch --quiet https://github.com/abonneth/cua-fork "$sha" || git -C "$src" fetch --quiet origin "$sha"
@@ -85,9 +78,6 @@ jobs:
           AB_ARMS: ${{ matrix.arms }}
           AB_THEN_REPS: ${{ matrix.reps }}
           AB_FRAMES: ${{ matrix.frames }}
-          AB_SHOTS: ${{ matrix.shots }}
-          AB_ROUNDS: ${{ matrix.rounds }}
-          REPS: ${{ matrix.rounds && '1' || '5' }}
         run: |
           set -euo pipefail
           script="$SRC/scripts/ci/macos/ab-run.sh"
@@ -118,18 +108,6 @@ jobs:
           cd "$SRC/libs/cua-driver/rust"
           rustup component add clippy
           CARGO_TARGET_DIR="$RUNNER_TEMP/target" cargo clippy --locked --workspace --all-targets -- -D warnings
-      - name: The new test, then without the grace
-        if: ${{ !cancelled() && matrix.failbefore == 'on' }}
-        run: |
-          cd "$SRC/libs/cua-driver/rust"
-          t=setup_approves_the_port_file_a_new_listener_writes_just_after_listening
-          f=crates/platform-macos/src/browser/platform.rs
-          CARGO_TARGET_DIR="$RUNNER_TEMP/target" cargo test --locked -p platform-macos --lib "$t" 2>&1 | tail -6
-          sed -i '' 's/const ACTIVE_PORT_FILE_GRACE: Duration = Duration::from_millis(500);/const ACTIVE_PORT_FILE_GRACE: Duration = Duration::from_millis(0);/; s|tokio::time::sleep(ACTIVE_PORT_FILE_GRACE / 2).await;|tokio::time::sleep(Duration::from_millis(250)).await;|' "$f"
-          git diff --stat -- "$f"
-          git diff -- "$f" | grep '^[+-] ' || true
-          CARGO_TARGET_DIR="$RUNNER_TEMP/target" cargo test --locked -p platform-macos --lib "$t" 2>&1 | tail -30 || true
-          git checkout -- "$f"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
