@@ -2424,7 +2424,7 @@ impl ToolRegistry {
                 != ProtectedResourceOwnership::DriverOwned
                 || context.capability_manifest().is_some())
         {
-            let approved_scope = match self
+            if let Err(refusal) = self
                 .authorize_attested_resource(
                     tool.as_ref(),
                     "browser_consequential_action",
@@ -2438,20 +2438,6 @@ impl ToolRegistry {
                 )
                 .await
             {
-                Ok(scope) => scope,
-                Err(refusal) => return refusal,
-            };
-            if let Err(refusal) = self
-                .validate_attested_resource(
-                    tool.as_ref(),
-                    "browser_consequential_action",
-                    &public_args,
-                    context,
-                    runtime_session.as_deref(),
-                    &approved_scope,
-                )
-                .await
-            {
                 return refusal;
             }
         }
@@ -2462,7 +2448,7 @@ impl ToolRegistry {
                 != ProtectedResourceOwnership::DriverOwned
                 || context.capability_manifest().is_some())
         {
-            let approved_scope = match self
+            if let Err(refusal) = self
                 .authorize_attested_resource(
                     tool.as_ref(),
                     "browser_bound_input",
@@ -2473,20 +2459,6 @@ impl ToolRegistry {
                     "Allow Cua to control this exact authenticated browser tab",
                     Duration::from_secs(30 * 60),
                     Duration::from_secs(8 * 60 * 60),
-                )
-                .await
-            {
-                Ok(scope) => scope,
-                Err(refusal) => return refusal,
-            };
-            if let Err(refusal) = self
-                .validate_attested_resource(
-                    tool.as_ref(),
-                    "browser_bound_input",
-                    &public_args,
-                    context,
-                    runtime_session.as_deref(),
-                    &approved_scope,
                 )
                 .await
             {
@@ -2513,19 +2485,6 @@ impl ToolRegistry {
                 Ok(scope) => scope,
                 Err(refusal) => return refusal,
             };
-            if let Err(refusal) = self
-                .validate_attested_resource(
-                    tool.as_ref(),
-                    "process_control",
-                    &public_args,
-                    context,
-                    runtime_session.as_deref(),
-                    &approved_scope,
-                )
-                .await
-            {
-                return refusal;
-            }
             if context.mode() != crate::authorization::PermissionMode::Unrestricted {
                 args["_protected_process_fingerprint"] = approved_scope["fingerprint"].clone();
             }
@@ -3331,6 +3290,8 @@ impl ToolRegistry {
         Ok(())
     }
 
+    /// Attest the exact resource and admit it, proving it again when
+    /// admission waited for an approval.
     #[allow(clippy::too_many_arguments)]
     async fn authorize_attested_resource(
         &self,
@@ -3367,8 +3328,9 @@ impl ToolRegistry {
                 });
             resource["driver_owned"] = Value::Bool(driver_owned);
         }
-        self.protected_resource_grants
-            .authorize(
+        let admission = self
+            .protected_resource_grants
+            .admit(
                 context,
                 adapter_id,
                 risk_class,
@@ -3380,6 +3342,17 @@ impl ToolRegistry {
             )
             .await
             .map_err(protected_consent_refusal)?;
+        if admission.waited {
+            self.validate_attested_resource(
+                tool,
+                adapter_id,
+                args,
+                context,
+                lifecycle_session,
+                &resource,
+            )
+            .await?;
+        }
         Ok(resource)
     }
 
@@ -6545,11 +6518,13 @@ resources:
     }
 
     #[tokio::test]
-    async fn standard_browser_identity_is_reproved_without_repeating_attach_authorization() {
+    async fn standard_browser_input_is_attested_once_when_admission_does_not_wait() {
         let hits = Arc::new(AtomicUsize::new(0));
         let provider = Arc::new(AcceptingProvider {
             requests: AtomicUsize::new(0),
         });
+        // A stale re-proof would refuse: dispatch must not ask for one, since
+        // the tool re-proves its own binding under the tab's mutation gate.
         let registry =
             attested_registry("browser_click", Some(provider.clone()), hits.clone(), true);
         let result = registry
@@ -6563,16 +6538,13 @@ resources:
                 standard_context(),
             )
             .await;
-        assert_eq!(hits.load(Ordering::SeqCst), 0);
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
         assert_eq!(provider.requests.load(Ordering::SeqCst), 0);
-        assert_eq!(
-            result
-                .structured_content
-                .as_ref()
-                .and_then(|value| value.pointer("/refusal/code"))
-                .and_then(serde_json::Value::as_str),
-            Some("protected_resource_scope_stale")
-        );
+        assert!(result
+            .structured_content
+            .as_ref()
+            .and_then(|value| value.pointer("/refusal/code"))
+            .is_none());
     }
 
     #[tokio::test]
