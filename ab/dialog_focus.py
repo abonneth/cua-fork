@@ -6,7 +6,12 @@ import socket
 import subprocess
 import sys
 import time
+import re
 
+from Xlib import display as xdisplay
+from Xlib.xobject import drawable as xwindow
+
+DISPLAY = xdisplay.Display()
 SOCK = "/tmp/cua-repro.sock"
 ENV = {**os.environ, "CUA_DRIVER_RS_TELEMETRY_ENABLED": "false", "CUA_DRIVER_RS_UPDATE_CHECK": "false"}
 WATCH_S = 3.0
@@ -34,14 +39,34 @@ def call(tool: str, args: dict) -> dict:
     return request({"method": "call", "name": tool, "args": {"session": "repro", **args}, "client_kind": "cli"})
 
 
+def first_hex(text: str) -> int:
+    match = re.search(r"0x[0-9a-fA-F]+", text)
+    return int(match.group(0), 16) if match else 0
+
+
 def active() -> int:
-    out = sh("xprop", "-root", "_NET_ACTIVE_WINDOW")
-    return int(out.rsplit(" ", 1)[-1], 16) if "0x" in out else 0
+    return first_hex(sh("xprop", "-root", "_NET_ACTIVE_WINDOW"))
 
 
-def core_focus() -> int:
-    out = sh("xdotool", "getwindowfocus", "-f")
-    return int(out) if out.isdigit() else 0
+def core_focus_chain() -> list[int]:
+    window = DISPLAY.get_input_focus().focus
+    chain = []
+    while isinstance(window, xwindow.Window) and window.id != DISPLAY.screen().root.id:
+        chain.append(window.id)
+        window = window.query_tree().parent
+    return chain
+
+
+def which(chain: list[int], main: int, dialog: int) -> str:
+    if dialog and dialog in chain:
+        return "dialog"
+    if main in chain:
+        return "main"
+    return name(chain[0]) if chain else "none"
+
+
+def transient_for(window: int) -> int:
+    return first_hex(sh("xprop", "-id", str(window), "WM_TRANSIENT_FOR")) if window else 0
 
 
 def name(window: int) -> str:
@@ -74,12 +99,13 @@ def watch(pid: int, main: int) -> dict:
         time.sleep(0.05)
     others = [w for w in app_windows(pid) if w != main]
     dialog = others[-1] if others else 0
-    act, core = active(), core_focus()
+    act = active()
     return {
         "dialog": name(dialog),
         "dialog_seen_ms": dialog_seen_ms,
-        "active": "dialog" if act == dialog and dialog else ("main" if act == main else name(act)),
-        "core_focus": "dialog" if core == dialog and dialog else ("main" if core == main else name(core)),
+        "dialog_transient_for_main": transient_for(dialog) == main,
+        "active": which([act], main, dialog),
+        "core_focus": which(core_focus_chain(), main, dialog),
     }
 
 
@@ -104,7 +130,7 @@ def main_() -> None:
     for arm in ("driver hotkey, foreground", "xdotool key (control)"):
         for rep in range(REPS):
             pid, main = start_mousepad()
-            before = {"active": "main" if active() == main else name(active()), "core_focus": "main" if core_focus() == main else name(core_focus())}
+            before = {"active": which([active()], main, 0), "core_focus": which(core_focus_chain(), main, 0)}
             if arm.startswith("driver"):
                 reply = call("hotkey", {"keys": ["ctrl", "shift", "s"], "target": {"kind": "window", "pid": pid, "window_id": main}, "delivery_mode": "foreground"})
                 summary = {k: reply.get(k) for k in ("ok", "error")}
@@ -122,14 +148,15 @@ def main_() -> None:
             close_dialogs(pid, main)
             sh("xdotool", "key", "--window", str(main), "ctrl+q")
             subprocess.run(["pkill", "-x", "mousepad"], env=ENV)
-    print("\n| arm | reps | dialog opened | active window after 3 s | keyboard focus after 3 s |")
-    print("|---|---|---|---|---|")
+    print("\n| arm | reps | dialog opened | transient for main | active window after 3 s | keyboard focus after 3 s |")
+    print("|---|---|---|---|---|---|")
     for arm in ("driver hotkey, foreground", "xdotool key (control)"):
         mine = [r for r in rows if r["arm"] == arm]
         opened = sum(1 for r in mine if r["dialog"] not in ("", "-"))
+        transient = sum(1 for r in mine if r["dialog_transient_for_main"])
         act = {k: sum(1 for r in mine if r["active"] == k) for k in {r["active"] for r in mine}}
         core = {k: sum(1 for r in mine if r["core_focus"] == k) for k in {r["core_focus"] for r in mine}}
-        print(f"| {arm} | {len(mine)} | {opened} | {act} | {core} |")
+        print(f"| {arm} | {len(mine)} | {opened} | {transient} | {act} | {core} |")
     daemon.terminate()
 
 

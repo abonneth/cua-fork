@@ -18,7 +18,7 @@ jobs:
         run: |
           apt=(sudo DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::http::Timeout=30 -o Acquire::Retries=3)
           "${apt[@]}" update
-          "${apt[@]}" install -y --no-install-recommends xvfb xauth x11-utils dbus-x11 at-spi2-core xfce4 mousepad xdotool
+          "${apt[@]}" install -y --no-install-recommends xvfb xauth x11-utils dbus-x11 at-spi2-core xfce4 mousepad xdotool python3-xlib
       - name: cua-driver release
         run: |
           curl -fsSL -o /tmp/d.tgz "https://github.com/trycua/cua/releases/download/cua-driver-rs-v${VERSION}/cua-driver-rs-${VERSION}-linux-x86_64-binary.tar.gz"
