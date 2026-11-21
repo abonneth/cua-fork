@@ -1,0 +1,32 @@
+name: ab-checks
+on:
+  push:
+    branches: [ab/checks-libproc]
+env:
+  SHA: 5881d4f047ec5aa138c9ba718e6e47e02ea0712c
+jobs:
+  checks:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-26]
+    steps:
+      - name: Source
+        run: |
+          set -euo pipefail
+          git clone --quiet --filter=blob:none --no-checkout https://github.com/trycua/cua src
+          git -C src fetch --quiet https://github.com/abonneth/cua-fork "$SHA"
+          git -C src checkout --quiet --force "$SHA"
+      - name: Tests
+        working-directory: src/libs/cua-driver/rust
+        run: |
+          set -euo pipefail
+          cargo test --locked -p platform-macos --lib 2>&1 | tail -15
+      - name: Format and clippy
+        if: matrix.os == 'macos-26'
+        working-directory: src/libs/cua-driver/rust
+        run: |
+          rustup component add clippy rustfmt
+          cargo fmt --all -- --check
+          cargo clippy --locked -p platform-macos --all-targets -- -D warnings
