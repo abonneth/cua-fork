@@ -21,6 +21,16 @@ from comtypes.gen import UIAutomationClient as UIA  # noqa: E402
 EXE, LABEL = sys.argv[1], sys.argv[2]
 REPS = int(os.environ.get("REPS", "3"))
 BROWSER = os.environ.get("BROWSER", "edge")
+
+
+def delays(name: str, default: str) -> list[int]:
+    return [int(value) for value in os.environ.get(name, default).split(",")]
+
+
+CANCEL_DELAYS = delays("CANCEL_DELAYS", "0,200,400")
+ALLOW_DELAYS = delays("ALLOW_DELAYS", "0,200")
+RETRY_DELAY = delays("RETRY_DELAY", "200")[0]
+RECONNECT_DELAY = delays("RECONNECT_DELAY", "0")[0]
 BUTTON_CLASS = "MdTextButton"
 GONE = (comtypes.COMError, ValueError)
 SUMMARY: list[str] = []
@@ -241,11 +251,11 @@ def answered_first(button: str, delays: list[int]) -> None:
 
 def retry_after_cancel() -> None:
     emit("\n#### The caller follows the refusal's hint after a Cancel, nobody touches the second prompt\n")
-    emit("| first `browser_prepare` (person cancels at 200 ms) | hint | `get_browser_state` | second `browser_prepare` | second prompt | final `get_browser_state` |")
+    emit(f"| first `browser_prepare` (person cancels at {RETRY_DELAY} ms) | hint | `get_browser_state` | second `browser_prepare` | second prompt | final `get_browser_state` |")
     emit("|---|---|---|---|---|---|")
     for rep in range(1, REPS + 1):
         run = Run(f"retry-{rep}")
-        first, _ = run.prepare(Person(run.hwnd, "cancel", 200))
+        first, _ = run.prepare(Person(run.hwnd, "cancel", RETRY_DELAY))
         hint = structured(first).get("hint")
         state, _ = run.state()
         watcher = Person(run.hwnd, None)
@@ -263,7 +273,7 @@ def reconnect(button: str | None, presses: int = 99) -> None:
         before, _ = run.state()
         dropped = drop_sockets(run.daemon.process.pid)
         time.sleep(1)
-        person = Person(run.hwnd, button, 0, every=True, presses=presses)
+        person = Person(run.hwnd, button, RECONNECT_DELAY, every=True, presses=presses)
         after, elapsed = run.state(person)
         again, _ = run.state()
         emit(f"| {outcome(bound)} / {outcome(before)} | {dropped} | {acts}: {person.report()} | {outcome(after)} | {elapsed} | {outcome(again)} | {run.close()} |")
@@ -272,9 +282,9 @@ def reconnect(button: str | None, presses: int = 99) -> None:
 
 def main() -> None:
     emit(f"### {LABEL} ({BROWSER})")
-    answered_first("cancel", [0, 200, 400])
+    answered_first("cancel", CANCEL_DELAYS)
     retry_after_cancel()
-    answered_first("allow", [0, 200])
+    answered_first("allow", ALLOW_DELAYS)
     emit("\n#### The bound socket is dropped, then `get_browser_state`\n")
     emit("| attach / state before | sockets dropped | person | `get_browser_state` after | ms | `get_browser_state` again | prompt left |")
     emit("|---|---|---|---|---|---|---|")

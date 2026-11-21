@@ -68,6 +68,10 @@ jobs:
         shell: pwsh
         env:
           BROWSER: chrome
+          CANCEL_DELAYS: "450,600,900"
+          ALLOW_DELAYS: "600"
+          RETRY_DELAY: "600"
+          RECONNECT_DELAY: "600"
         run: |
           Get-Process WWAHost, SearchHost, StartMenuExperienceHost -ErrorAction SilentlyContinue | Stop-Process -Force; Start-Sleep 2
           Start-Process $env:CHROME -ArgumentList '--no-first-run', '--no-default-browser-check', 'https://example.com'
