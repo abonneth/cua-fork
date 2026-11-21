@@ -20,8 +20,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        build: [A, B]
-        rep: [1, 2]
+        build: [A]
+        rep: [1]
     steps:
       - uses: actions/checkout@v4
       - name: Tools

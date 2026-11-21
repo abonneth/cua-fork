@@ -136,6 +136,23 @@ def page_text(target: dict) -> str:
 
 
 REFUSALS: dict[str, int] = {}
+EFFECTS: dict[str, dict[str, int]] = {}
+
+
+def effect_of(value) -> str | None:
+    if isinstance(value, dict):
+        if isinstance(value.get("effect"), str):
+            return value["effect"]
+        for inner in value.values():
+            found = effect_of(inner)
+            if found:
+                return found
+    if isinstance(value, list):
+        for inner in value:
+            found = effect_of(inner)
+            if found:
+                return found
+    return None
 
 
 def timed(samples: dict, name: str, tool: str, args: dict) -> dict:
@@ -143,6 +160,11 @@ def timed(samples: dict, name: str, tool: str, args: dict) -> dict:
     reply = call(tool, args)
     samples.setdefault(name, []).append((time.perf_counter() - started) * 1000)
     content = structured(reply)
+    if tool == "browser_click":
+        effect = effect_of(content) or "none"
+        EFFECTS.setdefault(name, {})[effect] = EFFECTS.setdefault(name, {}).get(effect, 0) + 1
+        if sum(EFFECTS[name].values()) == 1:
+            print(f"{name} reply:", json.dumps(content)[:700])
     if not reply.get("ok", False) or (reply.get("result") or {}).get("isError") or content.get("refusal") or content.get("status") == "refused":
         REFUSALS[name] = REFUSALS.get(name, 0) + 1
         if REFUSALS[name] == 1:
@@ -170,7 +192,7 @@ def main() -> None:
     for rep in range(max(3, REPS // 4)):
         timed(samples, "browser_navigate", "browser_navigate", {**target, "url": PAGE})
         found = refs(target)
-    print(f"\neffects: {REPS} clicks counted: {clicks_ok}; last typed text present: {typed_ok}; refusals: {REFUSALS or 'none'}")
+    print(f"\neffects: {REPS} clicks counted: {clicks_ok}; last typed text present: {typed_ok}; refusals: {REFUSALS or 'none'}; click effects: {EFFECTS}")
     print(f"\n| build {BUILD} | n | median ms | p90 ms | min ms |")
     print("|---|---|---|---|---|")
     for name, values in samples.items():
