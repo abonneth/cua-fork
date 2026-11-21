@@ -237,6 +237,24 @@ struct ResourceGrantKey {
     resource_digest: String,
 }
 
+/// The outcome of protected-resource admission.
+#[derive(Debug, Clone)]
+pub struct Admission {
+    pub grant: Option<ResourceGrant>,
+    /// Admission queued behind an approval prompt, so the resource may have
+    /// changed since it was attested.
+    pub waited: bool,
+}
+
+impl Admission {
+    fn without_wait(grant: Option<ResourceGrant>) -> Self {
+        Self {
+            grant,
+            waited: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct ResourceGrant {
     pub adapter_id: String,
@@ -384,6 +402,34 @@ impl ProtectedResourceGrants {
         idle_ttl: Duration,
         absolute_ttl: Duration,
     ) -> Result<Option<ResourceGrant>, ConsentError> {
+        self.admit(
+            context,
+            adapter_id,
+            risk_class,
+            lifecycle_session,
+            resource,
+            human_summary,
+            idle_ttl,
+            absolute_ttl,
+        )
+        .await
+        .map(|admission| admission.grant)
+    }
+
+    /// [`Self::authorize`], also telling whether admission waited for an
+    /// approval, its own or a peer's.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn admit(
+        &self,
+        context: &crate::session_authorization::EffectiveAuthorizationContext,
+        adapter_id: &str,
+        risk_class: RiskClass,
+        lifecycle_session: Option<&str>,
+        resource: Value,
+        human_summary: &str,
+        idle_ttl: Duration,
+        absolute_ttl: Duration,
+    ) -> Result<Admission, ConsentError> {
         let descriptor = ENFORCEMENT_ADAPTERS
             .iter()
             .find(|descriptor| descriptor.id == adapter_id)
@@ -413,7 +459,7 @@ impl ProtectedResourceGrants {
             descriptor.profile_behavior.for_mode(context.mode())
         };
         match profile_behavior {
-            ModeBehavior::Allow => return Ok(None),
+            ModeBehavior::Allow => return Ok(Admission::without_wait(None)),
             ModeBehavior::Deny => {
                 return Err(ConsentError::Provider(format!(
                     "adapter '{adapter_id}' is denied in {} mode",
@@ -426,14 +472,14 @@ impl ProtectedResourceGrants {
                         "bounded mode has no approved capability manifest".to_owned(),
                     )
                 })?;
-                return Ok(None);
+                return Ok(Admission::without_wait(None));
             }
             ModeBehavior::RequireGrant => {}
         }
         let resource_digest = digest_resource(adapter_id, &resource);
         let key = resource_grant_key(context, lifecycle_session, adapter_id, &resource_digest);
         if let Some(grant) = self.lookup(&key, context) {
-            return Ok(Some(grant));
+            return Ok(Admission::without_wait(Some(grant)));
         }
 
         // Collapse concurrent requests for the same or different protected
@@ -441,7 +487,10 @@ impl ProtectedResourceGrants {
         // peer that just approved the same exact scope supplies the grant.
         let _admission = self.admission.lock().await;
         if let Some(grant) = self.lookup(&key, context) {
-            return Ok(Some(grant));
+            return Ok(Admission {
+                grant: Some(grant),
+                waited: true,
+            });
         }
 
         let public_session = context
@@ -480,7 +529,10 @@ impl ProtectedResourceGrants {
             absolute_ttl,
         };
         self.grants.lock().unwrap().insert(key, grant.clone());
-        Ok(Some(grant))
+        Ok(Admission {
+            grant: Some(grant),
+            waited: true,
+        })
     }
 
     fn lookup(
@@ -796,6 +848,32 @@ mod tests {
             .unwrap()
             .is_none());
         assert_eq!(provider.requests.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn admission_waits_only_when_it_queues_for_an_approval() {
+        let provider = provider(ConsentAction::Accept);
+        let grants = ProtectedResourceGrants::new(Arc::new(ApprovalBroker::new(Some(provider))));
+        let context = authorization_context(PermissionMode::Standard);
+        let admit = |adapter: &'static str| {
+            grants.admit(
+                &context,
+                adapter,
+                RiskClass::R2,
+                Some("public-a"),
+                serde_json::json!({"history": "computer"}),
+                "Read computer history",
+                Duration::from_secs(30),
+                Duration::from_secs(60),
+            )
+        };
+
+        let prompted = admit("computer_history").await.unwrap();
+        assert!(prompted.waited && prompted.grant.is_some());
+        let cached = admit("computer_history").await.unwrap();
+        assert!(!cached.waited && cached.grant.is_some());
+        let routine = admit("browser_bound_input").await.unwrap();
+        assert!(!routine.waited && routine.grant.is_none());
     }
 
     #[tokio::test]
