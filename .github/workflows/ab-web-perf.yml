@@ -8,7 +8,7 @@ on:
 env:
   SHA_A: 04d952f8c8336b1d2083b22c513a3fa9f662927e
   SHA_B: 5881d4f047ec5aa138c9ba718e6e47e02ea0712c
-  SHA_C: 77c4fcc4c2f62f1ad74e2db080cd6ad23b24cbfd
+  SHA_C: 0bfc3dbb91bcce85474ce20f51e72f03af1d5f81
   CUA_TELEMETRY: "0"
   DO_NOT_TRACK: "1"
 
@@ -21,6 +21,7 @@ jobs:
       fail-fast: false
       matrix:
         build: [A, B, C]
+        rep: [1, 2]
     steps:
       - uses: actions/checkout@v4
       - name: Tools
@@ -40,6 +41,7 @@ jobs:
           CUA_E2E_INTERNAL_LANE: browser
           AB_PROBE: ${{ github.workspace }}/ab/web_perf.py
           AB_BUILD: ${{ matrix.build }}
+          AB_REP: ${{ matrix.rep }}
           REPS: "20"
         run: |
           set -euo pipefail
@@ -52,9 +54,9 @@ jobs:
           open -n -g "${LOCAL_APP}" --args --socket "${STD_SOCKET}" serve --grant existing-profile
           for _ in {1..60}; do [[ -S "${STD_SOCKET}" ]] && break; sleep 1; done
           "${INSTALLED_BIN}" --socket "${STD_SOCKET}" status || true
-          /usr/bin/perl -e 'alarm shift; exec @ARGV' 1500 python3 -u "${AB_PROBE}" "${INSTALLED_BIN}" "${STD_SOCKET}" "${AB_BUILD}-standard" || MATRIX_STATUS=$?
+          /usr/bin/perl -e 'alarm shift; exec @ARGV' 1500 python3 -u "${AB_PROBE}" "${INSTALLED_BIN}" "${STD_SOCKET}" "${AB_BUILD}${AB_REP}-standard" || MATRIX_STATUS=$?
           pkill -x "Google Chrome" || true; sleep 4
-          /usr/bin/perl -e 'alarm shift; exec @ARGV' 1500 python3 -u "${AB_PROBE}" "${INSTALLED_BIN}" "${DAEMON_SOCKET}" "${AB_BUILD}-unrestricted" || MATRIX_STATUS=$?
+          /usr/bin/perl -e 'alarm shift; exec @ARGV' 1500 python3 -u "${AB_PROBE}" "${INSTALLED_BIN}" "${DAEMON_SOCKET}" "${AB_BUILD}${AB_REP}-unrestricted" || MATRIX_STATUS=$?
           kill "${WATCHDOG_PID}" >/dev/null 2>&1 || true
           exit "${MATRIX_STATUS}"
           EOS
@@ -67,7 +69,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: perf-${{ matrix.build }}
+          name: perf-${{ matrix.build }}${{ matrix.rep }}
           path: |
             ab/perf-*.json
             ${{ env.SRC }}/artifacts/cua-driver
@@ -80,7 +82,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-26, macos-15, macos-26-intel]
+        os: [macos-26]
     steps:
       - name: Source C
         run: |

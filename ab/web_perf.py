@@ -115,8 +115,7 @@ def attach() -> dict:
     return target
 
 
-def refs(target: dict) -> dict[str, str]:
-    state = structured(call("get_browser_state", {**target, "snapshot_format": "semantic_v2"}))
+def refs_of(state: dict) -> dict[str, str]:
     found = {}
     for ref in state.get("refs") or []:
         name = str(ref.get("name") or ref.get("label") or "")
@@ -127,17 +126,27 @@ def refs(target: dict) -> dict[str, str]:
     return found
 
 
+def refs(target: dict) -> dict[str, str]:
+    return refs_of(structured(call("get_browser_state", {**target, "snapshot_format": "semantic_v2"})))
+
+
 def page_text(target: dict) -> str:
     return json.dumps(structured(call("get_browser_state", {**target, "snapshot_format": "semantic_v2"})))
+
+
+REFUSALS: dict[str, int] = {}
 
 
 def timed(samples: dict, name: str, tool: str, args: dict) -> dict:
     started = time.perf_counter()
     reply = call(tool, args)
     samples.setdefault(name, []).append((time.perf_counter() - started) * 1000)
-    if not reply.get("ok", False) or structured(reply).get("status") == "refused":
-        print(f"{name} failed:", json.dumps(reply)[:600])
-    return reply
+    content = structured(reply)
+    if not reply.get("ok", False) or (reply.get("result") or {}).get("isError") or content.get("refusal") or content.get("status") == "refused":
+        REFUSALS[name] = REFUSALS.get(name, 0) + 1
+        if REFUSALS[name] == 1:
+            print(f"{name} failed:", json.dumps(reply)[:800])
+    return content
 
 
 def main() -> None:
@@ -150,16 +159,16 @@ def main() -> None:
     samples: dict[str, list[float]] = {}
     for rep in range(REPS):
         timed(samples, "browser_dialog inspect", "browser_dialog", {**target, "action": "inspect"})
-        timed(samples, "get_browser_state", "get_browser_state", {**target, "snapshot_format": "semantic_v2"})
+        found = refs_of(timed(samples, "get_browser_state", "get_browser_state", {**target, "snapshot_format": "semantic_v2"}))
         timed(samples, "browser_click", "browser_click", {**target, "ref": found["Bump"], "input_route": "dom_event"})
         timed(samples, "browser_type", "browser_type", {**target, "ref": found["Name"], "text": f"rep{rep}", "replace": True})
     text = page_text(target)
-    clicks_ok = f"Clicks: {REPS}" in text or f'"{REPS}"' in text
+    clicks_ok = f'"name": "{REPS}"' in text
     typed_ok = f"rep{REPS - 1}" in text
     for rep in range(max(3, REPS // 4)):
         timed(samples, "browser_navigate", "browser_navigate", {**target, "url": PAGE})
         found = refs(target)
-    print(f"\neffects: {REPS} clicks counted: {clicks_ok}; last typed text present: {typed_ok}")
+    print(f"\neffects: {REPS} clicks counted: {clicks_ok}; last typed text present: {typed_ok}; refusals: {REFUSALS or 'none'}")
     print(f"\n| build {BUILD} | n | median ms | p90 ms | min ms |")
     print("|---|---|---|---|---|")
     for name, values in samples.items():
@@ -167,8 +176,8 @@ def main() -> None:
         p90 = values[min(len(values) - 1, int(len(values) * 0.9))]
         print(f"| {name} | {len(values)} | {statistics.median(values):.0f} | {p90:.0f} | {values[0]:.0f} |")
     with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), f"perf-{BUILD}.json"), "w") as handle:
-        json.dump({"build": BUILD, "effects": {"clicks": clicks_ok, "typed": typed_ok}, "samples": samples}, handle)
-    if not (clicks_ok and typed_ok):
+        json.dump({"build": BUILD, "effects": {"clicks": clicks_ok, "typed": typed_ok}, "refusals": REFUSALS, "samples": samples}, handle)
+    if not (clicks_ok and typed_ok) or REFUSALS:
         print("effect check failed; page:", text[:1500])
         sys.exit(1)
 
