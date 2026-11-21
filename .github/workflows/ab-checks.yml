@@ -3,7 +3,7 @@ on:
   push:
     branches: [ab/checks-readback]
 env:
-  SHA: 5cd6d70b7677d12a4866912b39fb6bb6526d11ed
+  SHA: 60b6925836049ddf8a2fb5885554227b1b0a73a7
 jobs:
   checks:
     runs-on: macos-26
