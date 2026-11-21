@@ -139,6 +139,39 @@ def clear(uia, hwnd: int) -> None:
         time.sleep(1.5)
 
 
+def double_trial(hwnd: int, port: int, path: str, first_ms: int, gap_ms: int) -> str:
+    uia = new_uia()
+    clear(uia, hwnd)
+    result: dict = {}
+
+    def person() -> None:
+        comtypes.CoInitializeEx(0)
+        puia = new_uia()
+        start = time.monotonic()
+        while time.monotonic() - start < 15:
+            row = look(puia, hwnd)
+            if row:
+                time.sleep(first_ms / 1000)
+                press(row["cancel"], "invoke")
+                time.sleep(gap_ms / 1000)
+                first_left = look(puia, hwnd) is not None
+                result["first_left"] = first_left
+                result["second"] = press(row["allow"], "invoke") if first_left else None
+                return
+            time.sleep(0.01)
+
+    watcher = threading.Thread(target=person, daemon=True)
+    watcher.start()
+    conn, status, took = upgrade(port, path, 20)
+    watcher.join(5)
+    conn.close()
+    first = "dropped" if result.get("first_left") else "landed"
+    line = f"| Cancel at {first_ms} ms ({first}) | Allow {gap_ms} ms later | {status} | {took:.1f} s |"
+    clear(uia, hwnd)
+    time.sleep(1)
+    return line
+
+
 def trial(hwnd: int, port: int, path: str, button: str, delay_ms: int, method: str) -> str:
     uia = new_uia()
     clear(uia, hwnd)
@@ -187,6 +220,23 @@ def emit(line: str) -> None:
 def main() -> None:
     hwnd = browser_window()
     port, path = endpoint()
+    if os.environ.get("PROBE") == "second":
+        emit(f"### {BROWSER}: single Invoke threshold\n")
+        emit("| button | press | after prompt shown | prompt seen | prompt | upgrade answer | upgrade took |")
+        emit("|---|---|---|---|---|---|---|")
+        for delay in (450, 500, 550, 600, 700):
+            for _ in range(REPS):
+                emit(trial(hwnd, port, path, "cancel", delay, "invoke"))
+        emit(f"\n### {BROWSER}: second press after a dropped first press\n")
+        emit("| first | second | upgrade answer | upgrade took |")
+        emit("|---|---|---|---|")
+        for first in (0, 200, 400):
+            for gap in (300, 500, 700, 1000):
+                for _ in range(REPS):
+                    emit(double_trial(hwnd, port, path, first, gap))
+        with open(os.environ.get("GITHUB_STEP_SUMMARY", os.devnull), "a", encoding="utf-8") as out:
+            out.write("\n".join(SUMMARY) + "\n")
+        return
     emit(f"### {BROWSER}: prompt pressed by a person, browser's answer to the upgrade\n")
     emit("| button | press | after prompt shown | prompt seen | prompt | upgrade answer | upgrade took |")
     emit("|---|---|---|---|---|---|---|")
