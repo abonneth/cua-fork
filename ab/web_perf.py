@@ -21,6 +21,7 @@ HTML = b"""<!doctype html><title>perf page</title>
 <h1>Perf page</h1>
 <button id="bump" onclick="n.textContent = +n.textContent + 1">Bump</button>
 <p>Clicks: <span id="n">0</span></p>
+<button id="toggle" aria-pressed="false" onclick="this.setAttribute('aria-pressed', this.getAttribute('aria-pressed') === 'true' ? 'false' : 'true')">Toggle</button>
 <label>Name <input id="name" aria-label="Name"></label>
 <a href="/">Reload link</a>"""
 
@@ -119,9 +120,9 @@ def refs_of(state: dict) -> dict[str, str]:
     found = {}
     for ref in state.get("refs") or []:
         name = str(ref.get("name") or ref.get("label") or "")
-        if name in ("Bump", "Name") and ref.get("ref"):
+        if name in ("Bump", "Name", "Toggle") and ref.get("ref"):
             found[name] = ref["ref"]
-    if len(found) != 2:
+    if len(found) != 3:
         raise RuntimeError(f"refs not found: {json.dumps(state)[:1200]}")
     return found
 
@@ -161,6 +162,7 @@ def main() -> None:
         timed(samples, "browser_dialog inspect", "browser_dialog", {**target, "action": "inspect"})
         found = refs_of(timed(samples, "get_browser_state", "get_browser_state", {**target, "snapshot_format": "semantic_v2"}))
         timed(samples, "browser_click", "browser_click", {**target, "ref": found["Bump"], "input_route": "dom_event"})
+        timed(samples, "browser_click on aria-pressed toggle", "browser_click", {**target, "ref": found["Toggle"], "input_route": "dom_event"})
         timed(samples, "browser_type", "browser_type", {**target, "ref": found["Name"], "text": f"rep{rep}", "replace": True})
     text = page_text(target)
     clicks_ok = f'"name": "{REPS}"' in text

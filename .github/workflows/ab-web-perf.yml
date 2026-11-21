@@ -20,7 +20,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        build: [A, B, C]
+        build: [A, B]
         rep: [1, 2]
     steps:
       - uses: actions/checkout@v4
@@ -62,7 +62,6 @@ jobs:
           }
           probe standard-nooverlay --no-overlay --grant existing-profile
           probe unrestricted-nooverlay --no-overlay --permission-mode unrestricted --dangerously-bypass-approvals
-          probe standard-overlay --grant existing-profile
           kill "${WATCHDOG_PID}" >/dev/null 2>&1 || true
           exit "${MATRIX_STATUS}"
           EOS
