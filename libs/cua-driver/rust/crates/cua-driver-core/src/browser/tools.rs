@@ -57,24 +57,40 @@ pub fn register_browser_tools(engine: &Arc<BrowserEngine>, registry: &mut ToolRe
 
 // ── Shared helpers ───────────────────────────────────────────────────────────
 
-const DOM_CLICK_READBACK: &str = r#"function() {
+const DOM_CLICK_READBACK: &str = r#"function(watch) {
   const bounded = value => typeof value === 'string' ? value.slice(0, 512) : null;
   const attr = name => bounded(this.getAttribute(name));
   return {
-    ariaPressed: attr('aria-pressed'),
-    ariaSelected: attr('aria-selected'),
-    ariaChecked: attr('aria-checked'),
-    ariaExpanded: attr('aria-expanded'),
-    ariaCurrent: attr('aria-current'),
-    ariaDisabled: attr('aria-disabled'),
-    disabled: 'disabled' in this ? Boolean(this.disabled) : null,
-    checked: 'checked' in this ? Boolean(this.checked) : null,
-    value: 'value' in this ? bounded(String(this.value)) : null,
-    innerText: bounded(this.innerText),
-    href: this.ownerDocument && this.ownerDocument.location
-      ? bounded(this.ownerDocument.location.href)
-      : null
+    state: {
+      ariaPressed: attr('aria-pressed'),
+      ariaSelected: attr('aria-selected'),
+      ariaChecked: attr('aria-checked'),
+      ariaExpanded: attr('aria-expanded'),
+      ariaCurrent: attr('aria-current'),
+      ariaDisabled: attr('aria-disabled'),
+      disabled: 'disabled' in this ? Boolean(this.disabled) : null,
+      checked: 'checked' in this ? Boolean(this.checked) : null,
+      value: 'value' in this ? bounded(String(this.value)) : null,
+      innerText: bounded(this.innerText),
+      href: this.ownerDocument && this.ownerDocument.location
+        ? bounded(this.ownerDocument.location.href)
+        : null
+    },
+    mutated: Boolean(watch && watch.mutated)
   };
+}"#;
+
+/// Records whether anything in the target's document changed. It disconnects
+/// at the first mutation, so an unreleased watch costs the page nothing.
+const DOM_CLICK_MUTATION_WATCH: &str = r#"function() {
+  const watch = new MutationObserver(() => {
+    watch.mutated = true;
+    watch.disconnect();
+  });
+  watch.observe(this.ownerDocument, {
+    subtree: true, childList: true, attributes: true, characterData: true
+  });
+  return watch;
 }"#;
 
 const DOM_CLICK_READBACK_DEADLINE: Duration = Duration::from_millis(400);
@@ -90,29 +106,66 @@ struct DomClickObservation {
     readback_available: bool,
 }
 
+struct DomClickRead {
+    state: Value,
+    page_mutated: bool,
+}
+
 async fn read_dom_click_state(
     conn: &CdpConnection,
     cdp: &str,
     object_id: &str,
+    watch: Option<&str>,
     budget: Duration,
-) -> Option<Value> {
-    tokio::time::timeout(
+) -> Option<DomClickRead> {
+    let mut params = json!({
+        "objectId": object_id,
+        "functionDeclaration": DOM_CLICK_READBACK,
+        "returnByValue": true,
+    });
+    if let Some(watch) = watch {
+        params["arguments"] = json!([{ "objectId": watch }]);
+    }
+    let reply = tokio::time::timeout(
         budget,
+        conn.call(Some(cdp), "Runtime.callFunctionOn", params),
+    )
+    .await
+    .ok()?
+    .ok()?;
+    let value = reply.pointer("/result/value")?;
+    Some(DomClickRead {
+        state: value
+            .get("state")
+            .filter(|state| state.is_object())?
+            .clone(),
+        page_mutated: value["mutated"].as_bool().unwrap_or(false),
+    })
+}
+
+async fn watch_dom_click_mutations(
+    conn: &CdpConnection,
+    cdp: &str,
+    object_id: &str,
+) -> Option<String> {
+    let reply = tokio::time::timeout(
+        DOM_CLICK_READBACK_DEADLINE,
         conn.call(
             Some(cdp),
             "Runtime.callFunctionOn",
             json!({
                 "objectId": object_id,
-                "functionDeclaration": DOM_CLICK_READBACK,
-                "returnByValue": true,
+                "functionDeclaration": DOM_CLICK_MUTATION_WATCH,
             }),
         ),
     )
     .await
-    .ok()
-    .and_then(Result::ok)
-    .and_then(|reply| reply.pointer("/result/value").cloned())
-    .filter(Value::is_object)
+    .ok()?
+    .ok()?;
+    reply
+        .pointer("/result/objectId")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
 }
 
 fn dom_click_state_changed(before: &Value, after: &Value) -> bool {
@@ -122,11 +175,13 @@ fn dom_click_state_changed(before: &Value, after: &Value) -> bool {
         .is_some_and(|(before, after)| before != after)
 }
 
+/// Only the target's own state confirms; any document mutation ends the wait.
 async fn observe_dom_click(
     conn: &CdpConnection,
     cdp: &str,
     object_id: &str,
     before: Option<Value>,
+    watch: Option<&str>,
 ) -> DomClickObservation {
     let Some(before) = before else {
         return DomClickObservation {
@@ -147,11 +202,17 @@ async fn observe_dom_click(
         // remainder reported a slow-but-answering page as "readback
         // unavailable" instead of "state unchanged".
         if let Some(after) =
-            read_dom_click_state(conn, cdp, object_id, DOM_CLICK_READBACK_DEADLINE).await
+            read_dom_click_state(conn, cdp, object_id, watch, DOM_CLICK_READBACK_DEADLINE).await
         {
-            if dom_click_state_changed(&before, &after) {
+            if dom_click_state_changed(&before, &after.state) {
                 return DomClickObservation {
                     effect: effect_from_value_readback(true, true, true),
+                    readback_available: true,
+                };
+            }
+            if after.page_mutated {
+                return DomClickObservation {
+                    effect: ActionEffect::Unverifiable,
                     readback_available: true,
                 };
             }
@@ -1619,7 +1680,14 @@ impl Tool for BrowserClickTool {
                     .await;
             }
             let before =
-                read_dom_click_state(conn, cdp, &object_id, DOM_CLICK_BASELINE_DEADLINE).await;
+                read_dom_click_state(conn, cdp, &object_id, None, DOM_CLICK_BASELINE_DEADLINE)
+                    .await
+                    .map(|read| read.state);
+            let watch = if before.is_some() {
+                watch_dom_click_mutations(conn, cdp, &object_id).await
+            } else {
+                None
+            };
             let click = conn.call(
                 Some(cdp),
                 "Runtime.callFunctionOn",
@@ -1633,7 +1701,8 @@ impl Tool for BrowserClickTool {
                 .unwrap_or(Ok(json!({})));
             return match (outcome, conn.dialog_state(cdp_target_id)) {
                 (Ok(_), None) => {
-                    let observation = observe_dom_click(conn, cdp, &object_id, before).await;
+                    let observation =
+                        observe_dom_click(conn, cdp, &object_id, before, watch.as_deref()).await;
                     let text = match observation.effect {
                         ActionEffect::Confirmed => format!(
                             "dispatched synthetic DOM click on {} in {tab_id}; bounded semantic \
@@ -1733,7 +1802,9 @@ impl Tool for BrowserClickTool {
         };
         let before = match readback_object.as_deref() {
             Some(object_id) => {
-                read_dom_click_state(conn, cdp, object_id, DOM_CLICK_BASELINE_DEADLINE).await
+                read_dom_click_state(conn, cdp, object_id, None, DOM_CLICK_BASELINE_DEADLINE)
+                    .await
+                    .map(|read| read.state)
             }
             None => None,
         };
@@ -1763,6 +1834,12 @@ impl Tool for BrowserClickTool {
                     .to_tool_result();
             }
         }
+        let watch = match readback_object.as_deref() {
+            Some(object_id) if before.is_some() => {
+                watch_dom_click_mutations(conn, cdp, object_id).await
+            }
+            _ => None,
+        };
 
         let mut delivery_error = None;
         let mut opened = None;
@@ -1847,7 +1924,9 @@ impl Tool for BrowserClickTool {
                 return ToolResult::text(text).with_structured(structured);
             }
             let observation = match readback_object.as_deref() {
-                Some(object_id) => observe_dom_click(conn, cdp, object_id, before).await,
+                Some(object_id) => {
+                    observe_dom_click(conn, cdp, object_id, before, watch.as_deref()).await
+                }
                 None => DomClickObservation {
                     effect: effect_from_value_readback(false, false, false),
                     readback_available: false,

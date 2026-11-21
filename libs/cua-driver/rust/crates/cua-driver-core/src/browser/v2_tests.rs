@@ -139,6 +139,9 @@ pub(super) struct FixtureState {
     dom_click_changes_readback: bool,
     /// A trusted `mouseReleased` changes the target's semantic readback.
     trusted_click_changes_readback: bool,
+    /// A click (either route) mutates the document outside the target.
+    click_mutates_page: bool,
+    page_mutated: bool,
     dom_click_readback_available: bool,
     /// `DOM.resolveNode` answers a CDP error.
     resolve_node_fails: bool,
@@ -206,6 +209,8 @@ impl Default for FixtureState {
             select_outcome: Value::Null,
             dom_click_changes_readback: true,
             trusted_click_changes_readback: false,
+            click_mutates_page: false,
+            page_mutated: false,
             dom_click_readback_available: true,
             resolve_node_fails: false,
             dom_click_stall_after: None,
@@ -905,8 +910,11 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                 MockReply::hang().with_events(events)
             }
             "Input.dispatchMouseEvent" => {
-                if st.trusted_click_changes_readback && call.params["type"] == "mouseReleased" {
-                    st.dom_click_generation += 1;
+                if call.params["type"] == "mouseReleased" {
+                    if st.trusted_click_changes_readback {
+                        st.dom_click_generation += 1;
+                    }
+                    st.page_mutated |= st.click_mutates_page;
                 }
                 MockReply::ok(json!({}))
             }
@@ -970,12 +978,21 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                     .as_str()
                     .unwrap()
                     .contains("activeElement"));
+                let watched = call.params["arguments"][0]["objectId"] == "watch-1";
                 let value = json!({
-                    "innerText": format!("counter={}", st.dom_click_generation)
+                    "state": { "innerText": format!("counter={}", st.dom_click_generation) },
+                    "mutated": watched && st.page_mutated,
                 });
                 let mut reply = MockReply::ok(json!({ "result": { "value": value } }));
                 reply.delay = st.dom_click_readback_delay;
                 reply
+            }
+            "Runtime.callFunctionOn"
+                if call.params["functionDeclaration"]
+                    .as_str()
+                    .is_some_and(|declaration| declaration.contains("MutationObserver")) =>
+            {
+                MockReply::ok(json!({ "result": { "type": "object", "objectId": "watch-1" } }))
             }
             "Runtime.callFunctionOn"
                 if call.params["functionDeclaration"]
@@ -991,6 +1008,7 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                 if st.dom_click_changes_readback {
                     st.dom_click_generation += 1;
                 }
+                st.page_mutated |= st.click_mutates_page;
                 let declaration = call.params["functionDeclaration"]
                     .as_str()
                     .unwrap_or_default();
@@ -4333,6 +4351,47 @@ async fn dom_event_click_is_unverifiable_when_readback_disappears() {
         f.state.lock().unwrap().dom_click_reads_before_failure,
         Some(0)
     );
+}
+
+#[tokio::test]
+async fn click_readback_stops_at_the_first_page_mutation_and_confirms_only_the_target() {
+    for (route, target_changes, effect) in [
+        ("dom_event", false, "unverifiable"),
+        ("dom_event", true, "confirmed"),
+        ("trusted", false, "unverifiable"),
+        ("trusted", true, "confirmed"),
+    ] {
+        let f = fixture_with(|state| {
+            state.click_mutates_page = true;
+            state.dom_click_changes_readback = route == "dom_event" && target_changes;
+            state.trusted_click_changes_readback = route == "trusted" && target_changes;
+        })
+        .await;
+        let (target, tab) = bind(&f).await;
+        let snap = snapshot(&f, &target, &tab).await;
+        let main_ref = ref_of(&snap, "main", "main-btn");
+        let result = BrowserClickTool::new(f.engine.clone())
+            .invoke(json!({
+                "target_id": target, "tab_id": tab, "ref": main_ref,
+                "input_route": route, "session": SESSION,
+            }))
+            .await;
+        let public = public_click_result(&result);
+        assert_eq!(public["effect"], effect, "{route}: {public}");
+        assert_eq!(
+            public["evidence"][0]["kind"], "value_readback",
+            "{route}: {public}"
+        );
+        let reads = recorded_calls(&f, "Runtime.callFunctionOn")
+            .into_iter()
+            .filter(|(_, params)| {
+                params["functionDeclaration"]
+                    .as_str()
+                    .is_some_and(|declaration| declaration.contains("ariaPressed"))
+            })
+            .count();
+        assert_eq!(reads, 2, "{route}: the baseline and one post-click read");
+    }
 }
 
 #[tokio::test]
