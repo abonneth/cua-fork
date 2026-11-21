@@ -1,0 +1,59 @@
+name: ab-prompt-probe
+
+on:
+  push:
+    branches: [ab/prompt-probe]
+
+jobs:
+  probe:
+    name: probe ${{ matrix.browser }}
+    runs-on: windows-11-arm
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [chrome, edge]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Browser
+        shell: pwsh
+        run: |
+          if ("${{ matrix.browser }}" -eq "chrome") {
+            $paths = @("$env:ProgramFiles\Google\Chrome\Application\chrome.exe", "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe")
+            $exe = $paths | Where-Object { Test-Path $_ } | Select-Object -First 1
+            if (-not $exe) {
+              winget install --id Google.Chrome --exact --silent --accept-package-agreements --accept-source-agreements --disable-interactivity
+              $exe = $paths | Where-Object { Test-Path $_ } | Select-Object -First 1
+            }
+            $state = "$env:LOCALAPPDATA\Google\Chrome\User Data\Local State"
+            $name = "chrome"
+          } else {
+            $exe = @("${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe", "$env:ProgramFiles\Microsoft\Edge\Application\msedge.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
+            $state = "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Local State"
+            $name = "msedge"
+          }
+          if (-not $exe) { throw "no browser" }
+          (Get-Item $exe).VersionInfo.ProductVersion
+          Start-Process $exe -ArgumentList '--no-first-run', '--no-default-browser-check', 'about:blank'
+          foreach ($i in 1..60) { if (Test-Path $state) { break }; Start-Sleep 1 }
+          Start-Sleep 5
+          Get-Process $name -ErrorAction SilentlyContinue | Stop-Process -Force
+          Start-Sleep 3
+          $json = Get-Content $state -Raw | ConvertFrom-Json
+          if (-not $json.devtools) { $json | Add-Member devtools ([pscustomobject]@{}) }
+          $json.devtools | Add-Member remote_debugging ([pscustomobject]@{ 'user-enabled' = $true }) -Force
+          $json | ConvertTo-Json -Depth 100 -Compress | Set-Content $state -Encoding utf8
+          Get-Process WWAHost, SearchHost, StartMenuExperienceHost -ErrorAction SilentlyContinue | Stop-Process -Force; Start-Sleep 2
+          Start-Process $exe -ArgumentList '--no-first-run', '--no-default-browser-check', 'https://example.com'
+          Start-Sleep 10
+      - name: Probe
+        shell: pwsh
+        env:
+          BROWSER: ${{ matrix.browser }}
+          REPS: "2"
+        run: |
+          pip install -q comtypes
+          python prompt_probe.py
