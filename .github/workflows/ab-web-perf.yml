@@ -8,6 +8,7 @@ on:
 env:
   SHA_A: 04d952f8c8336b1d2083b22c513a3fa9f662927e
   SHA_B: 5881d4f047ec5aa138c9ba718e6e47e02ea0712c
+  SHA_C: 77c4fcc4c2f62f1ad74e2db080cd6ad23b24cbfd
   CUA_TELEMETRY: "0"
   DO_NOT_TRACK: "1"
 
@@ -19,9 +20,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        build: [A, B]
+        build: [A, B, C]
     steps:
       - uses: actions/checkout@v4
+      - name: Tools
+        run: brew install ffmpeg jq 2>/dev/null || true
       - name: Source ${{ matrix.build }}
         run: |
           set -euo pipefail
@@ -79,17 +82,18 @@ jobs:
       matrix:
         os: [macos-26, macos-15, macos-26-intel]
     steps:
-      - name: Source B
+      - name: Source C
         run: |
           set -euo pipefail
           git clone --quiet --filter=blob:none --no-checkout https://github.com/trycua/cua src
-          git -C src fetch --quiet https://github.com/abonneth/cua-fork "$SHA_B"
-          git -C src checkout --quiet --force "$SHA_B"
+          git -C src fetch --quiet https://github.com/abonneth/cua-fork "$SHA_C"
+          git -C src checkout --quiet --force "$SHA_C"
       - name: Tests
         working-directory: src/libs/cua-driver/rust
         run: |
           set -euo pipefail
           cargo test --locked -p platform-macos --lib browser:: 2>&1 | tail -25
+          cargo test --locked -p cua-driver-core --lib 2>&1 | tail -25
       - name: Clippy and fmt
         if: matrix.os == 'macos-26'
         working-directory: src/libs/cua-driver/rust
@@ -97,4 +101,4 @@ jobs:
           set -euo pipefail
           rustup component add clippy rustfmt
           cargo fmt --all -- --check
-          cargo clippy --locked -p platform-macos --all-targets -- -D warnings
+          cargo clippy --locked -p platform-macos -p cua-driver-core --all-targets -- -D warnings
