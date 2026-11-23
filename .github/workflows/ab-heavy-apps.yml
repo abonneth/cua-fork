@@ -1,0 +1,178 @@
+name: ab-heavy-apps
+
+on:
+  push:
+    branches: [ab/heavy-apps]
+  workflow_dispatch:
+
+env:
+  DRIVER_SHA: 68210fe377a532e7e3b58fa03c95d7fe9d11339b
+  FREECAD: https://github.com/FreeCAD/FreeCAD/releases/download/1.1.4/FreeCAD_1.1.4
+  AB_WALKS: "25"
+  AB_BIG_WALKS: "4"
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+  HEADER: "| app | error | walk s (med) | nodes (med) | truncated | app RSS MB base > after walks > idle | driver RSS MB | big walk s / nodes / app RSS | errors |\n|---|---|---|---|---|---|---|---|---|"
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Desktop and apps
+        run: |
+          apt=(sudo DEBIAN_FRONTEND=noninteractive apt-get -o Acquire::http::Timeout=30 -o Acquire::Retries=3)
+          "${apt[@]}" update
+          "${apt[@]}" install -y --no-install-recommends \
+            xvfb xauth x11-utils dbus-x11 at-spi2-core xfce4 mousepad libfuse2 \
+            libxcb-cursor0 libegl1 libgl1 libxkbcommon-x11-0 \
+            libreoffice-calc libreoffice-gtk3 inkscape kicad krita
+          curl -fsSL -o /tmp/FreeCAD.AppImage "${FREECAD}-Linux-x86_64-py311.AppImage"
+          chmod +x /tmp/FreeCAD.AppImage
+          (cd /tmp && /tmp/FreeCAD.AppImage --appimage-extract >/dev/null) && ls /tmp/squashfs-root | head
+          find /tmp/squashfs-root -name '*.FCStd' -size +100k | head -20
+          pip install -q psutil "cua-driver==0.58.1"
+          cua-driver --version
+      - name: Walk heavy apps
+        env:
+          DISPLAY: ":99"
+        run: |
+          Xvfb "$DISPLAY" -screen 0 1920x1080x24 -nolisten tcp &
+          for _ in $(seq 20); do xdpyinfo -display "$DISPLAY" >/dev/null 2>&1 && break; sleep 0.5; done
+          eval "$(dbus-launch --sh-syntax)"
+          export DBUS_SESSION_BUS_ADDRESS
+          startxfce4 &
+          for _ in $(seq 30); do xwininfo -root -tree 2>/dev/null | grep -q xfdesktop && break; sleep 1; done
+          mkdir -p ab-results
+          cua-driver serve --socket /tmp/ab.sock > ab-results/driver.log 2>&1 &
+          for _ in $(seq 30); do [ -S /tmp/ab.sock ] && break; sleep 0.5; done
+          model=$(find /tmp/squashfs-root -name '*.FCStd' -size +100k -printf '%s %p\n' | sort -n | tail -1 | cut -d' ' -f2-)
+          echo "model: $model"
+          echo -e "$HEADER" >> "$GITHUB_STEP_SUMMARY"
+          run() { timeout 1500 python ab/heavy_apps.py /tmp/ab.sock "$@" || echo "probe $1 exit $?"; sleep 3; }
+          run mousepad "mousepad" mousepad
+          run freecad-empty "/tmp/squashfs-root/AppRun" 'freecad|AppRun'
+          run freecad-model "/tmp/squashfs-root/AppRun $model" 'freecad|AppRun'
+          run libreoffice-calc "libreoffice --calc --norestore" soffice
+          run inkscape "inkscape" inkscape
+          run kicad-pcb "pcbnew" pcbnew
+          run krita "krita --nosplash" krita
+          free -m; sudo dmesg | grep -iE 'oom|killed process' || echo "no OOM kills"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux
+          path: ab-results
+
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Apps
+        shell: pwsh
+        run: |
+          pip install -q psutil "cua-driver==0.58.1"
+          cua-driver --version
+          curl.exe -fsSL -o "$env:RUNNER_TEMP\fc.7z" "$env:FREECAD-Windows-x86_64-py311.7z"
+          7z x -y -o"$env:RUNNER_TEMP\fc" "$env:RUNNER_TEMP\fc.7z" | Out-Null
+          $exe = Get-ChildItem "$env:RUNNER_TEMP\fc" -Recurse -Filter FreeCAD.exe | Select-Object -First 1
+          "FREECAD_EXE=$($exe.FullName)" >> $env:GITHUB_ENV
+          $model = Get-ChildItem "$env:RUNNER_TEMP\fc" -Recurse -Filter *.FCStd | Sort-Object Length | Select-Object -Last 1
+          "FREECAD_MODEL=$($model.FullName)" >> $env:GITHUB_ENV
+          "model: $($model.FullName) $($model.Length)"
+          choco install libreoffice-fresh -y --no-progress | Select-Object -Last 3
+      - name: Walk heavy apps
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force ab-results | Out-Null
+          $pipe = '\\.\pipe\ab-heavy'
+          Start-Process cua-driver -ArgumentList 'serve', '--socket', $pipe -RedirectStandardError ab-results\driver.log -RedirectStandardOutput ab-results\driver.out -WindowStyle Hidden
+          Start-Sleep 5
+          ($env:HEADER -replace '\\n', "`n") | Out-File -Append -Encoding utf8 $env:GITHUB_STEP_SUMMARY
+          function Probe($label, $launch, $match) { python ab/heavy_apps.py $pipe $label $launch $match; "probe $label exit $LASTEXITCODE"; Start-Sleep 3 }
+          Probe notepad "notepad.exe" notepad
+          Probe freecad-empty "`"$env:FREECAD_EXE`"" freecad
+          Probe freecad-model "`"$env:FREECAD_EXE`" `"$env:FREECAD_MODEL`"" freecad
+          Probe libreoffice-calc "`"C:\Program Files\LibreOffice\program\soffice.exe`" --calc --norestore" soffice
+          Get-CimInstance Win32_OperatingSystem | Select-Object FreePhysicalMemory, TotalVisibleMemorySize
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows
+          path: ab-results
+
+  macos:
+    runs-on: macos-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Apps
+        run: |
+          set -euo pipefail
+          brew install jq 2>/dev/null || true
+          pip install -q psutil
+          curl -fsSL -o /tmp/fc.dmg "${FREECAD}-macOS-arm64-py311.dmg"
+          mnt=$(hdiutil attach -nobrowse -readonly /tmp/fc.dmg | grep -o '/Volumes/.*' | head -1)
+          cp -R "$mnt/FreeCAD.app" /Applications/ && hdiutil detach "$mnt" >/dev/null
+          xattr -dr com.apple.quarantine /Applications/FreeCAD.app || true
+          find /Applications/FreeCAD.app -name '*.FCStd' -size +100k | head
+          brew install --cask libreoffice 2>&1 | tail -2 || true
+          xattr -dr com.apple.quarantine /Applications/LibreOffice.app 2>/dev/null || true
+          sw_vers; sysctl -n hw.memsize
+      - name: Driver source
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/src"
+          git clone --quiet --filter=blob:none --no-checkout https://github.com/trycua/cua "$src"
+          git -C "$src" checkout --quiet --force "$DRIVER_SHA"
+          echo "SRC=$src" >> "$GITHUB_ENV"
+      - name: Bootstrap the driver, then walk heavy apps
+        env:
+          CUA_E2E_INTERNAL_LANE: native
+          AB_PROBE: ${{ github.workspace }}/ab/heavy_apps.py
+          AB_OUT: ${{ github.workspace }}/ab-results
+        run: |
+          set -euo pipefail
+          script="$SRC/scripts/ci/macos/ab-run.sh"
+          sed '/^mark_phase "matrix-/,$d' "$SRC/scripts/ci/macos/run-hosted-rust-e2e.sh" > "$script"
+          cat >> "$script" <<'EOS'
+          mark_phase "ab-heavy"
+          mkdir -p "${AB_OUT}"
+          echo -e "${HEADER}" >> "${GITHUB_STEP_SUMMARY}"
+          model=$(find /Applications/FreeCAD.app -name '*.FCStd' -size +100k -exec stat -f '%z %N' {} + | sort -n | tail -1 | cut -d' ' -f2-)
+          echo "model: ${model}"
+          probe() { /usr/bin/perl -e 'alarm shift; exec @ARGV' 1500 python3 -u "${AB_PROBE}" "${DAEMON_SOCKET}" "$@" || echo "probe $1 exit $?"; sleep 3; }
+          probe textedit "/System/Applications/TextEdit.app/Contents/MacOS/TextEdit" TextEdit
+          probe freecad-empty "/Applications/FreeCAD.app/Contents/MacOS/FreeCAD" FreeCAD
+          probe freecad-model "/Applications/FreeCAD.app/Contents/MacOS/FreeCAD ${model}" FreeCAD
+          probe libreoffice-calc "/Applications/LibreOffice.app/Contents/MacOS/soffice --calc --norestore" soffice
+          vm_stat | head -8
+          log show --last 90m --style compact --predicate 'eventMessage CONTAINS[c] "jetsam" OR eventMessage CONTAINS[c] "memorystatus"' 2>/dev/null | tail -20 || true
+          kill "${WATCHDOG_PID}" >/dev/null 2>&1 || true
+          exit 0
+          EOS
+          echo "scripts/ci/macos/ab-run.sh" >> "$SRC/.git/info/exclude"
+          cd "$SRC"
+          GITHUB_EVENT_NAME=workflow_dispatch \
+            CUA_E2E_SOURCE_SHA="$DRIVER_SHA" CUA_E2E_WORKFLOW_SHA="$DRIVER_SHA" \
+            CARGO_TARGET_DIR="$RUNNER_TEMP/target" \
+            bash "$script"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos
+          path: |
+            ab-results
+            ${{ env.SRC }}/artifacts/cua-driver/macos-hosted-bootstrap
+          if-no-files-found: ignore
