@@ -18,7 +18,7 @@ env:
 jobs:
   focus:
     name: ${{ matrix.build }} ${{ matrix.mode }} ${{ matrix.arms }} t${{ matrix.trial }}
-    runs-on: macos-26
+    runs-on: macos-latest
     timeout-minutes: ${{ matrix.mode == 'e2e' && 200 || 120 }}
     strategy:
       fail-fast: false
