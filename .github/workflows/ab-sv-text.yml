@@ -1,6 +1,8 @@
 name: "ab: macOS set_value numeric text"
 
 on:
+  push:
+    branches: [ab/macos-set-value-text-stays-text]
   workflow_dispatch:
     inputs:
       sha:
@@ -17,23 +19,25 @@ permissions:
   contents: read
 
 env:
+  SHA: ${{ inputs.sha || '164544e18b9c0a928f0a4c5f3690fc7528ba2b51' }}
   CUA_TELEMETRY: "0"
   DO_NOT_TRACK: "1"
 
 jobs:
   e2e:
+    if: github.event_name == 'workflow_dispatch'
     name: appkit set_value e2e
     runs-on: macos-26
     timeout-minutes: 120
     env:
-      CUA_E2E_SOURCE_SHA: ${{ inputs.sha }}
+      CUA_E2E_SOURCE_SHA: ${{ inputs.sha || '164544e18b9c0a928f0a4c5f3690fc7528ba2b51' }}
       CUA_E2E_INTERNAL_LANE: native
       CUA_E2E_HARNESS_FILTER: appkit
       CUA_E2E_CELL_FILTER: macos-appkit-set-value-numeric-text-ax-background,macos-appkit-set-value-ax-background
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          ref: ${{ inputs.sha }}
+          ref: ${{ env.SHA }}
           fetch-depth: 1
           persist-credentials: false
       - name: Target dir
@@ -68,7 +72,7 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
-          ref: ${{ inputs.sha }}
+          ref: ${{ env.SHA }}
           fetch-depth: 1
           persist-credentials: false
       - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
