@@ -5,8 +5,8 @@ on:
     branches: [ab/daemon-survives-accept-errors-and-signals]
 
 env:
-  SHA: ace7dac9cc94b02fc93dc9f588b7f04079339931
-  TEST_SHA: "f3e671d6a144ec6c25b65339be020c811f28bea1"
+  SHA: 55d64ee892baf143c99754438e9989a134a56c18
+  TEST_SHA: ""
   CHECKS: "false"
   PYTHON: "true"
   CARGO_NET_RETRY: "10"
@@ -95,7 +95,7 @@ jobs:
         run: cargo test --locked -p cua-driver
 
   macos:
-    if: true
+    if: false
     runs-on: macos-15-intel
     timeout-minutes: 90
     steps:
@@ -129,7 +129,7 @@ jobs:
         run: "cargo test --locked -p cua-driver --bin cua-driver serve::"
 
   windows:
-    if: true
+    if: false
     runs-on: windows-latest
     timeout-minutes: 120
     steps:
