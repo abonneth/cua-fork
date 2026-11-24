@@ -1,0 +1,87 @@
+name: "ab: Linux held XTest keys repro"
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "Fork commit whose code is built"
+        required: true
+      test_sha:
+        description: "Fork commit the regression test file is taken from"
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_NET_RETRY: "10"
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+
+jobs:
+  repro:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    defaults:
+      run:
+        shell: bash
+        working-directory: libs/cua-driver/rust
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ inputs.sha }}
+          fetch-depth: 0
+      - name: Use the regression test from the fix on this code
+        run: |
+          git checkout "${{ inputs.test_sha }}" -- crates/platform-linux/tests/key_input_x11.rs
+          echo "code=$(git rev-parse HEAD) test_from=${{ inputs.test_sha }}"
+          git status --short
+      - uses: ./.github/actions/linux-rust-prep
+      - name: Install X11 tools
+        working-directory: .
+        run: sudo apt-get install -y --no-install-recommends xvfb xauth x11-utils x11-xserver-utils xinput
+      - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
+        with:
+          components: clippy, rustfmt
+      - name: Build the X11 key tests
+        run: cargo test -p platform-linux --test key_input_x11 --locked --no-run
+      - name: Repro on a live Xvfb, then read the server key state
+        id: repro
+        continue-on-error: true
+        run: |
+          set +e
+          Xvfb :77 -screen 0 640x480x24 -ac -noreset -nolisten tcp >/tmp/xvfb-77.log 2>&1 &
+          for _ in $(seq 1 50); do DISPLAY=:77 xdpyinfo >/dev/null 2>&1 && break; sleep 0.1; done
+          export DISPLAY=:77
+          echo "Control_L: $(xmodmap -pke | grep -w Control_L | head -1)"
+          echo "keys down before: $(xinput query-state 'Virtual core keyboard' | grep -c '=down')"
+          status=0
+          cargo test -p platform-linux --test key_input_x11 --locked -- --ignored --nocapture \
+            --test-threads=1 --exact a_failed_xtest_chord_leaves_no_key_held \
+            an_xtest_hotkey_with_an_unknown_modifier_sends_nothing || status=$?
+          echo "X server keys down after the test process exited:"
+          xinput query-state 'Virtual core keyboard' | grep '=down' || echo "  none"
+          exit "$status"
+      - name: Checks (fmt, clippy, platform-linux tests, X11 key and click suites)
+        id: checks
+        continue-on-error: true
+        run: |
+          set +e
+          fail=0
+          cargo fmt --all -- --check && echo "CHECK fmt: ok" || { echo "CHECK fmt: FAILED"; fail=1; }
+          cargo clippy --locked -p platform-linux --all-targets -- -D warnings \
+            && echo "CHECK clippy: ok" || { echo "CHECK clippy: FAILED"; fail=1; }
+          cargo test --locked -p platform-linux 2>&1 | tee /tmp/unit.log
+          [ "${PIPESTATUS[0]}" = 0 ] && echo "CHECK platform-linux tests: ok" || { echo "CHECK platform-linux tests: FAILED"; fail=1; }
+          xvfb-run -a cargo test -p platform-linux --test key_input_x11 --locked -- --ignored \
+            --nocapture --test-threads=1 && echo "CHECK key_input_x11: ok" || { echo "CHECK key_input_x11: FAILED"; fail=1; }
+          xvfb-run -a --server-args="-screen 0 640x480x24 -noreset" \
+            cargo test -p platform-linux --test click_input_x11 --locked -- --ignored --nocapture \
+            --test-threads=1 && echo "CHECK click_input_x11: ok" || { echo "CHECK click_input_x11: FAILED"; fail=1; }
+          grep -E '^test result:' /tmp/unit.log | awk '{p+=$4; f+=$6} END {print "unit totals: passed=" p " failed=" f}'
+          exit "$fail"
+      - name: Summary
+        run: |
+          echo "repro=${{ steps.repro.outcome }} checks=${{ steps.checks.outcome }}"
+          [ "${{ steps.repro.outcome }}" = success ] && [ "${{ steps.checks.outcome }}" = success ]
