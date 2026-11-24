@@ -19,6 +19,11 @@ on:
         required: false
         type: string
         default: macos-26
+      probe:
+        description: "Run the Swift-only AX probe instead of the e2e lane"
+        required: false
+        type: boolean
+        default: false
       lane:
         required: false
         type: string
@@ -42,7 +47,7 @@ env:
 
 jobs:
   e2e:
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' && !inputs.probe
     name: appkit set_value e2e
     runs-on: ${{ inputs.runner || 'macos-26' }}
     timeout-minutes: 120
@@ -124,3 +129,48 @@ jobs:
           python3 -m venv "${RUNNER_TEMP}/venv"
           "${RUNNER_TEMP}/venv/bin/pip" install -q pytest
           "${RUNNER_TEMP}/venv/bin/pytest" -q libs/cua-driver/scripts/tests/test_macos_lume_runner.py -k appkit
+
+  probe:
+    if: inputs.probe
+    name: swift AX probe
+    runs-on: ${{ inputs.runner || 'macos-26-intel' }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - name: Build
+        run: |
+          sw_vers; sysctl -n hw.model; csrutil status || true
+          xcrun swiftc .github/ab/sv-text/fixture.swift -o "${RUNNER_TEMP}/fixture"
+          xcrun swiftc .github/ab/sv-text/probe.swift -o "${RUNNER_TEMP}/probe"
+      - name: Accessibility for the probe
+        run: |
+          "${RUNNER_TEMP}/probe" 0 - x | tee trust.txt
+          if grep -q "AXIsProcessTrusted=false" trust.txt; then
+            sudo sqlite3 -cmd ".timeout 30000" "/Library/Application Support/com.apple.TCC/TCC.db" \
+              "INSERT OR REPLACE INTO access(service,client,client_type,auth_value,auth_reason,auth_version,csreq,flags,indirect_object_identifier_type,indirect_object_identifier,indirect_object_code_identity,last_modified) VALUES ('kTCCServiceAccessibility','${RUNNER_TEMP}/probe',1,2,4,1,NULL,0,0,'UNUSED',NULL,strftime('%s','now'));"
+            sudo killall tccd || true
+            sleep 3
+            "${RUNNER_TEMP}/probe" 0 - x
+          fi
+      - name: Probe AppKit, SwiftUI and WKWebView fields
+        run: |
+          "${RUNNER_TEMP}/fixture" "${RUNNER_TEMP}/state.json" &
+          pid=$!
+          sleep 8
+          cat "${RUNNER_TEMP}/state.json" || true
+          echo
+          "${RUNNER_TEMP}/probe" "${pid}" "${RUNNER_TEMP}/state.json" native
+          kill "${pid}" || true
+      - name: Probe a Chrome input
+        run: |
+          chrome="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+          [ -x "${chrome}" ] || { echo "no Chrome"; exit 0; }
+          "${chrome}" --user-data-dir="${RUNNER_TEMP}/chrome" --force-renderer-accessibility \
+            --no-first-run --no-default-browser-check \
+            "data:text/html,<input aria-label=webfield>" >/dev/null 2>&1 &
+          pid=$!
+          sleep 12
+          "${RUNNER_TEMP}/probe" "${pid}" - chrome
+          kill "${pid}" || true
