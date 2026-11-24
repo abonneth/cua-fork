@@ -1,0 +1,98 @@
+name: "ab: macOS set_value numeric text"
+
+on:
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: "Full commit SHA of the fork to test"
+        required: true
+        type: string
+      checks:
+        description: "Also run fmt, clippy and unit tests"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  CUA_TELEMETRY: "0"
+  DO_NOT_TRACK: "1"
+
+jobs:
+  e2e:
+    name: appkit set_value e2e
+    runs-on: macos-26
+    timeout-minutes: 120
+    env:
+      CUA_E2E_SOURCE_SHA: ${{ inputs.sha }}
+      CUA_E2E_INTERNAL_LANE: native
+      CUA_E2E_HARNESS_FILTER: appkit
+      CUA_E2E_CELL_FILTER: macos-appkit-set-value-numeric-text-ax-background,macos-appkit-set-value-ax-background
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ inputs.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Target dir
+        run: echo "CARGO_TARGET_DIR=${RUNNER_TEMP}/cua-driver-target-native" >> "${GITHUB_ENV}"
+      - name: Install missing test dependencies
+        run: |
+          missing=()
+          command -v ffmpeg >/dev/null 2>&1 || missing+=(ffmpeg)
+          command -v jq >/dev/null 2>&1 || missing+=(jq)
+          if ((${#missing[@]})); then brew install "${missing[@]}"; fi
+      - name: Run hosted macOS lane (filtered)
+        run: scripts/ci/macos/run-hosted-rust-e2e.sh
+      - name: Show set_value evidence
+        if: always()
+        run: |
+          grep -rhE "set_value (txt-input|sld-value)|after set_value|does not hold|test result|panicked" \
+            artifacts/cua-driver/macos/*.log || true
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4.6.2
+        with:
+          name: ab-sv-text-${{ github.run_id }}-${{ github.run_attempt }}
+          path: artifacts/cua-driver
+          if-no-files-found: warn
+          retention-days: 7
+
+  checks:
+    if: inputs.checks
+    name: fmt, clippy, unit tests
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          ref: ${{ inputs.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
+        with:
+          components: clippy, rustfmt
+      - name: fmt
+        working-directory: libs/cua-driver/rust
+        run: cargo fmt --all --check
+      - name: clippy platform-macos
+        working-directory: libs/cua-driver/rust
+        run: cargo clippy --locked -p platform-macos --all-targets -- -D warnings
+      - name: clippy cua-driver-e2e
+        working-directory: libs/cua-driver/rust
+        run: cargo clippy --locked -p cua-driver-e2e --all-targets -- -D warnings
+      - name: platform-macos unit tests
+        working-directory: libs/cua-driver/rust
+        env:
+          CUA_TEST_ALLOW_CLIPBOARD: "1"
+        run: cargo test --locked -p platform-macos --lib
+      - name: hermetic cua-driver-e2e tests
+        working-directory: libs/cua-driver/rust
+        run: cargo test --locked -p cua-driver-e2e
+      - name: AppKit cell manifest
+        run: |
+          python3 -m venv "${RUNNER_TEMP}/venv"
+          "${RUNNER_TEMP}/venv/bin/pip" install -q pytest
+          "${RUNNER_TEMP}/venv/bin/pytest" -q libs/cua-driver/scripts/tests/test_macos_lume_runner.py -k appkit
