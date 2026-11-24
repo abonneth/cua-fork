@@ -19,6 +19,18 @@ on:
         required: false
         type: string
         default: macos-26
+      lane:
+        required: false
+        type: string
+        default: native
+      harness_filter:
+        required: false
+        type: string
+        default: appkit
+      cell_filter:
+        required: false
+        type: string
+        default: macos-appkit-set-value-numeric-text-ax-background,macos-appkit-set-value-ax-background
 
 permissions:
   contents: read
@@ -36,9 +48,9 @@ jobs:
     timeout-minutes: 120
     env:
       CUA_E2E_SOURCE_SHA: ${{ inputs.sha || '164544e18b9c0a928f0a4c5f3690fc7528ba2b51' }}
-      CUA_E2E_INTERNAL_LANE: native
-      CUA_E2E_HARNESS_FILTER: appkit
-      CUA_E2E_CELL_FILTER: macos-appkit-set-value-numeric-text-ax-background,macos-appkit-set-value-ax-background
+      CUA_E2E_INTERNAL_LANE: ${{ inputs.lane || 'native' }}
+      CUA_E2E_HARNESS_FILTER: ${{ inputs.harness_filter || 'appkit' }}
+      CUA_E2E_CELL_FILTER: ${{ inputs.cell_filter || 'macos-appkit-set-value-numeric-text-ax-background,macos-appkit-set-value-ax-background' }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
@@ -65,7 +77,7 @@ jobs:
       - name: Show set_value evidence
         if: always()
         run: |
-          grep -rhE "set_value (txt-input|sld-value)|after set_value|does not hold|test result|panicked" \
+          grep -rhE "PROBE|set_value (txt-input|sld-value)|after set_value|does not hold|test result|panicked" \
             artifacts/cua-driver/macos/*.log || true
       - name: Upload evidence
         if: always()
