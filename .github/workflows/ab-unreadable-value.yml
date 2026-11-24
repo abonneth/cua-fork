@@ -1,15 +1,8 @@
 name: "ab: windows type_text unreadable value"
 
 on:
-  workflow_dispatch:
-    inputs:
-      sha:
-        description: "Full commit SHA of the fork to test"
-        required: true
-      checks:
-        description: "Also run fmt, clippy and platform-windows unit tests"
-        required: false
-        default: "false"
+  push:
+    branches: [ab/windows-type-text-unreadable-value]
 
 permissions:
   contents: read
@@ -20,16 +13,25 @@ env:
   CARGO_HTTP_MULTIPLEXING: "false"
   CUA_TELEMETRY: "0"
   DO_NOT_TRACK: "1"
+  FIX_SHA: da298527a049b9ea8b8922fddf29fb82dc83b550
 
 jobs:
   repro:
-    name: "WPF unreadable value repro @ ${{ inputs.sha }}"
+    name: "WPF unreadable value repro @ ${{ matrix.label }} ${{ matrix.sha }}"
     runs-on: windows-2025
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: main+test
+            sha: 07e4302028e18586f8eaf075389539debc592fe5
+          - label: fix
+            sha: da298527a049b9ea8b8922fddf29fb82dc83b550
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          ref: ${{ inputs.sha }}
+          ref: ${{ matrix.sha }}
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: ${{ github.ref }}
@@ -87,20 +89,19 @@ jobs:
         if: always()
         uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
         with:
-          name: ab-unreadable-value-${{ inputs.sha }}
+          name: ab-unreadable-value-${{ matrix.sha }}
           path: artifacts/ab
           if-no-files-found: ignore
           retention-days: 7
 
   checks:
-    if: inputs.checks == 'true'
-    name: "fmt + clippy + unit @ ${{ inputs.sha }}"
+    name: "fmt + clippy + unit @ fix"
     runs-on: windows-2025
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          ref: ${{ inputs.sha }}
+          ref: ${{ env.FIX_SHA }}
       - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
         with:
           components: clippy, rustfmt
