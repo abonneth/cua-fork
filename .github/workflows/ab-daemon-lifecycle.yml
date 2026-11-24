@@ -5,9 +5,9 @@ on:
     branches: [ab/daemon-survives-accept-errors-and-signals]
 
 env:
-  SHA: ace7dac9cc94b02fc93dc9f588b7f04079339931
-  TEST_SHA: "6cdc90e838f5ad6b8f8721ea3203c9cee6e6c6ae"
-  CHECKS: "false"
+  SHA: 6cdc90e838f5ad6b8f8721ea3203c9cee6e6c6ae
+  TEST_SHA: ""
+  CHECKS: "true"
   PYTHON: "false"
   CARGO_NET_RETRY: "10"
   CARGO_INCREMENTAL: "0"
