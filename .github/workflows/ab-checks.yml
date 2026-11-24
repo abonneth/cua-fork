@@ -6,7 +6,7 @@ env:
   SHA: 4bd610993f185dc5a8c5877d854c51b559ed2339
 jobs:
   checks:
-    runs-on: macos-latest
+    runs-on: macos-15-intel
     steps:
       - name: Source
         run: |
