@@ -117,8 +117,16 @@ def main(driver):
         time.sleep(1)
         a_lines = [r["text"] for r in events("A")]
         b_lines = [r["text"] for r in events("B")]
-        check("two-window: input for B lands in B", b_lines == ["to-B"] and not a_lines,
+        check("two-window foreground: input for B lands in B", b_lines == ["to-B"] and not a_lines,
               f"A got {a_lines}, B got {b_lines}")
+
+        background_b = dict(target_b, delivery_mode="background")
+        typed_bg = call("type_text", dict(background_b, text="bg-B"))
+        pressed_bg = call("press_key", dict(background_b, key="Return"))
+        time.sleep(2)
+        a_after = [r["text"] for r in events("A")]
+        check("two-window background: input for B never lands in A", a_after == a_lines,
+              f"A got {a_after}, type_text code={typed_bg.get('code')}, press_key code={pressed_bg.get('code')}")
 
         # Single-window terminal keeps the pty route.
         spawn(["xterm", "-T", "PTY-C", "-e", sys.executable, me, "--reader", "C", str(out), "child"])
@@ -129,8 +137,10 @@ def main(driver):
         call("press_key", dict(target_c, key="Return"))
         wait_for(lambda: events("C"), timeout=5)
         c_lines = [r["text"] for r in events("C")]
-        check("single-window: pty route delivers", c_lines == ["to-C"] and typed.get("path") == "pty",
-              f"C got {c_lines}, type_text path={typed.get('path')}")
+        # Background key routes are refused here (see the B background case), so this is the pty route.
+        mode = typed.get("delivery", {}).get("mode")
+        check("single-window: background pty route delivers", c_lines == ["to-C"] and mode == "background",
+              f"C got {c_lines}, delivery={mode}")
 
         # Enter through the pty must be Return (CR), which fzf accepts; LF is Ctrl-J (down).
         fzf_out = work / "fzf.out"
