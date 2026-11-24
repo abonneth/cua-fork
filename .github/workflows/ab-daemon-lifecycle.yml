@@ -1,25 +1,14 @@
 name: ab-daemon-lifecycle
 
 on:
-  workflow_dispatch:
-    inputs:
-      sha:
-        description: "Fork commit to build"
-        required: true
-      test_sha:
-        description: "Commit to take serve_lifecycle_cli_test.rs from (empty: none)"
-        default: ""
-      checks:
-        description: "Also run fmt, clippy and tests"
-        default: "false"
-      macos:
-        default: "false"
-      windows:
-        default: "false"
-      python:
-        default: "false"
+  push:
+    branches: [ab/daemon-survives-accept-errors-and-signals]
 
 env:
+  SHA: ace7dac9cc94b02fc93dc9f588b7f04079339931
+  TEST_SHA: "f3e671d6a144ec6c25b65339be020c811f28bea1"
+  CHECKS: "false"
+  PYTHON: "true"
   CARGO_NET_RETRY: "10"
   CARGO_INCREMENTAL: "0"
   CARGO_PROFILE_DEV_DEBUG: "0"
@@ -34,7 +23,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.sha }}
+          ref: ${{ env.SHA }}
       - uses: actions/checkout@v4
         with:
           path: harness
@@ -46,16 +35,16 @@ jobs:
         with:
           components: clippy, rustfmt
       - name: Take the regression test
-        if: inputs.test_sha != ''
+        if: env.TEST_SHA != ''
         run: |
-          git fetch --depth 1 origin ${{ inputs.test_sha }}
-          git checkout ${{ inputs.test_sha }} -- $TEST_FILE
+          git fetch --depth 1 origin ${{ env.TEST_SHA }}
+          git checkout ${{ env.TEST_SHA }} -- $TEST_FILE
           git status --short
       - name: Build
         working-directory: libs/cua-driver/rust
         run: |
           echo "source $(git rev-parse HEAD)"
-          cargo build --locked -p cua-driver $([ "${{ inputs.python }}" = true ] && echo "-p cua-driver-sdk")
+          cargo build --locked -p cua-driver $([ "${{ env.PYTHON }}" = true ] && echo "-p cua-driver-sdk")
       - name: Repro accept errors
         if: always()
         continue-on-error: true
@@ -65,7 +54,7 @@ jobs:
         continue-on-error: true
         run: xvfb-run -a dbus-run-session -- bash harness/.github/ab/daemon-lifecycle/sigterm.sh libs/cua-driver/rust/target/debug/cua-driver
       - name: Repro Python wrapper SIGTERM
-        if: always() && inputs.python == 'true'
+        if: always() && env.PYTHON == 'true'
         continue-on-error: true
         run: |
           bash harness/.github/ab/daemon-lifecycle/py_wrapper.sh \
@@ -73,7 +62,7 @@ jobs:
             libs/cua-driver/rust/target/debug/libcua_driver_sdk.so \
             libs/cua-driver/python
       - name: Python wrapper tests and lint
-        if: always() && inputs.python == 'true'
+        if: always() && env.PYTHON == 'true'
         continue-on-error: true
         working-directory: libs/cua-driver/python
         run: |
@@ -83,22 +72,22 @@ jobs:
           /tmp/py-checks/bin/ruff check src/cua_driver/wrapper.py src/cua_driver/__main__.py tests/test_wrapper.py
           /tmp/py-checks/bin/ruff format --diff src/cua_driver/wrapper.py src/cua_driver/__main__.py tests/test_wrapper.py || true
       - name: Regression test
-        if: always() && (inputs.test_sha != '' || inputs.checks == 'true')
+        if: always() && (env.TEST_SHA != '' || env.CHECKS == 'true')
         continue-on-error: true
         working-directory: libs/cua-driver/rust
         run: cargo test --locked -p cua-driver --test serve_lifecycle_cli_test -- --nocapture
       - name: fmt
-        if: always() && inputs.checks == 'true'
+        if: always() && env.CHECKS == 'true'
         continue-on-error: true
         working-directory: libs/cua-driver/rust
         run: cargo fmt --all --check
       - name: clippy
-        if: always() && inputs.checks == 'true'
+        if: always() && env.CHECKS == 'true'
         continue-on-error: true
         working-directory: libs/cua-driver/rust
         run: cargo clippy --locked -p cua-driver --all-targets -- -D warnings
       - name: cua-driver tests
-        if: always() && inputs.checks == 'true'
+        if: always() && env.CHECKS == 'true'
         continue-on-error: true
         working-directory: libs/cua-driver/rust
         env:
@@ -106,21 +95,21 @@ jobs:
         run: cargo test --locked -p cua-driver
 
   macos:
-    if: inputs.macos == 'true'
+    if: true
     runs-on: macos-15-intel
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.sha }}
+          ref: ${{ env.SHA }}
       - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5
         with:
           components: clippy
       - name: Take the regression test
-        if: inputs.test_sha != ''
+        if: env.TEST_SHA != ''
         run: |
-          git fetch --depth 1 origin ${{ inputs.test_sha }}
-          git checkout ${{ inputs.test_sha }} -- $TEST_FILE
+          git fetch --depth 1 origin ${{ env.TEST_SHA }}
+          git checkout ${{ env.TEST_SHA }} -- $TEST_FILE
       - name: Regression test
         if: always()
         continue-on-error: true
@@ -129,24 +118,24 @@ jobs:
           CUA_TEST_DRIVER_STDERR: "1"
         run: cargo test --locked -p cua-driver --test serve_lifecycle_cli_test --test status_pid_file_cli_test -- --nocapture
       - name: clippy
-        if: always() && inputs.checks == 'true'
+        if: always() && env.CHECKS == 'true'
         continue-on-error: true
         working-directory: libs/cua-driver/rust
         run: cargo clippy --locked -p cua-driver --all-targets -- -D warnings
       - name: serve unit tests
-        if: always() && inputs.checks == 'true'
+        if: always() && env.CHECKS == 'true'
         continue-on-error: true
         working-directory: libs/cua-driver/rust
         run: cargo test --locked -p cua-driver --bin cua-driver serve:: -- --skip the_system_consent_labels_include_allow_and_dont_allow
 
   windows:
-    if: inputs.windows == 'true'
+    if: true
     runs-on: windows-latest
     timeout-minutes: 120
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ inputs.sha }}
+          ref: ${{ env.SHA }}
       - uses: actions/checkout@v4
         with:
           path: harness
@@ -164,12 +153,12 @@ jobs:
         continue-on-error: true
         run: python harness/.github/ab/daemon-lifecycle/ctrl_break.py libs/cua-driver/rust/target/debug/cua-driver.exe
       - name: clippy
-        if: always() && inputs.checks == 'true'
+        if: always() && env.CHECKS == 'true'
         continue-on-error: true
         working-directory: libs/cua-driver/rust
         run: cargo clippy --locked -p cua-driver --all-targets -- -D warnings
       - name: Windows daemon tests
-        if: always() && inputs.checks == 'true'
+        if: always() && env.CHECKS == 'true'
         continue-on-error: true
         working-directory: libs/cua-driver/rust
         run: |
