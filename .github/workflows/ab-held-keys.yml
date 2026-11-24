@@ -1,14 +1,8 @@
 name: "ab: Linux held XTest keys repro"
 
 on:
-  workflow_dispatch:
-    inputs:
-      sha:
-        description: "Fork commit whose code is built"
-        required: true
-      test_sha:
-        description: "Fork commit the regression test file is taken from"
-        required: true
+  push:
+    branches: [ab/linux-release-held-keys]
 
 permissions:
   contents: read
@@ -21,7 +15,18 @@ env:
 
 jobs:
   repro:
+    name: repro ${{ matrix.label }}
     runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: main
+            sha: ace7dac9cc94b02fc93dc9f588b7f04079339931
+          - label: fix
+            sha: c999499f6aebe44314438a411f325476ae00cffb
+    env:
+      TEST_SHA: c999499f6aebe44314438a411f325476ae00cffb
     timeout-minutes: 75
     defaults:
       run:
@@ -30,12 +35,12 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          ref: ${{ inputs.sha }}
+          ref: ${{ matrix.sha }}
           fetch-depth: 0
       - name: Use the regression test from the fix on this code
         run: |
-          git checkout "${{ inputs.test_sha }}" -- crates/platform-linux/tests/key_input_x11.rs
-          echo "code=$(git rev-parse HEAD) test_from=${{ inputs.test_sha }}"
+          git checkout "$TEST_SHA" -- crates/platform-linux/tests/key_input_x11.rs
+          echo "code=$(git rev-parse HEAD) test_from=$TEST_SHA"
           git status --short
       - uses: ./.github/actions/linux-rust-prep
       - name: Install X11 tools
