@@ -60,13 +60,13 @@ jobs:
           for _ in $(seq 1 50); do DISPLAY=:77 xdpyinfo >/dev/null 2>&1 && break; sleep 0.1; done
           export DISPLAY=:77
           echo "Control_L: $(xmodmap -pke | grep -w Control_L | head -1)"
-          echo "keys down before: $(xinput query-state 'Virtual core keyboard' | grep -c '=down')"
+          echo "keys down before: $(xinput query-state 'Virtual core XTEST keyboard' | grep -c '=down')"
           status=0
           cargo test -p platform-linux --test key_input_x11 --locked -- --ignored --nocapture \
             --test-threads=1 --exact a_failed_xtest_chord_leaves_no_key_held \
             an_xtest_hotkey_with_an_unknown_modifier_sends_nothing || status=$?
           echo "X server keys down after the test process exited:"
-          xinput query-state 'Virtual core keyboard' | grep '=down' || echo "  none"
+          xinput query-state 'Virtual core XTEST keyboard' | grep '=down' || echo "  none"
           exit "$status"
       - name: Checks (fmt, clippy, platform-linux tests, X11 key and click suites)
         id: checks
