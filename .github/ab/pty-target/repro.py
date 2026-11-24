@@ -151,6 +151,16 @@ def main(driver):
         wait_for(lambda: fzf_out.exists() and fzf_out.read_text(), timeout=5)
         picked = fzf_out.read_text().strip() if fzf_out.exists() else ""
         check("single-window: Enter accepts in fzf", picked == "one", f"fzf output {picked!r}")
+
+        fzf_typed = work / "fzf-typed.out"
+        spawn(["xterm", "-T", "PTY-FZF-TYPED", "-e", "sh", "-c",
+               f"printf 'one\\ntwo\\n' | fzf > {fzf_typed}; sleep 1000"])
+        win_t = window("PTY-FZF-TYPED")
+        time.sleep(3)
+        call("type_text", {"pid": win_t["pid"], "window_id": win_t["window_id"], "text": "\n"})
+        wait_for(lambda: fzf_typed.exists() and fzf_typed.read_text(), timeout=5)
+        picked = fzf_typed.read_text().strip() if fzf_typed.exists() else ""
+        check("single-window: typed newline accepts in fzf", picked == "one", f"fzf output {picked!r}")
     finally:
         subprocess.run([driver, "--socket", endpoint, "stop"], capture_output=True, timeout=20)
         for p in reversed(procs):
