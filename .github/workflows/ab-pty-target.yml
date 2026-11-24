@@ -8,8 +8,8 @@ permissions:
   contents: read
 
 env:
-  TARGET_SHA: ace7dac9cc94b02fc93dc9f588b7f04079339931
-  CHECKS: "false"
+  TARGET_SHA: dadb13f682f2228f6ff3fa81c1bd097bdfd4cb29
+  CHECKS: "true"
   CARGO_NET_RETRY: "10"
   CUA_TELEMETRY: "0"
   DO_NOT_TRACK: "1"
