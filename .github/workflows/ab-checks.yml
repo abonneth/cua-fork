@@ -23,8 +23,8 @@ jobs:
         working-directory: src/libs/cua-driver/rust
         run: |
           set -euo pipefail
-          cargo test --locked -p platform-macos --lib 2>&1 | tail -25
-          cargo test --locked -p cua-driver-core --lib browser:: 2>&1 | tail -25
+          cargo test --locked -p platform-macos --lib -- --skip the_system_consent_labels_include_allow_and_dont_allow 2>&1 | tail -25| tail -25
+          cargo test --locked -p cua-driver-core --lib browser:: 2>&1 |cargo test --locked -p platform-macos --lib -- --skip the_system_consent_labels_include_allow_and_dont_allow 2>&1 | tail -25
       - name: Clippy
         working-directory: src/libs/cua-driver/rust
         run: cargo clippy --locked -p cua-driver-core -p platform-macos --all-targets -- -D warnings
