@@ -1,19 +1,15 @@
 name: ab-pty-target
 
 on:
-  workflow_dispatch:
-    inputs:
-      sha:
-        description: "Full commit SHA of the fork to test"
-        required: true
-      checks:
-        description: "Also run fmt, clippy and platform-linux unit tests"
-        default: "false"
+  push:
+    branches: [ab/linux-terminal-pty-target]
 
 permissions:
   contents: read
 
 env:
+  TARGET_SHA: ace7dac9cc94b02fc93dc9f588b7f04079339931
+  CHECKS: "false"
   CARGO_NET_RETRY: "10"
   CUA_TELEMETRY: "0"
   DO_NOT_TRACK: "1"
@@ -25,10 +21,9 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          ref: ${{ inputs.sha }}
+          ref: ${{ env.TARGET_SHA }}
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          ref: ${{ github.ref }}
           path: harness
       - uses: ./.github/actions/linux-rust-prep
       - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
@@ -52,14 +47,14 @@ jobs:
           xvfb-run -a --server-args="-screen 0 1280x800x24" dbus-run-session -- \
             python3 harness/.github/ab/pty-target/repro.py libs/cua-driver/rust/target/debug/cua-driver
       - name: fmt
-        if: ${{ !cancelled() && inputs.checks == 'true' }}
+        if: ${{ !cancelled() && env.CHECKS == 'true' }}
         working-directory: libs/cua-driver/rust
         run: cargo fmt --all --check
       - name: clippy
-        if: ${{ !cancelled() && inputs.checks == 'true' }}
+        if: ${{ !cancelled() && env.CHECKS == 'true' }}
         working-directory: libs/cua-driver/rust
         run: cargo clippy --locked -p platform-linux --all-targets -- -D warnings
       - name: platform-linux unit tests
-        if: ${{ !cancelled() && inputs.checks == 'true' }}
+        if: ${{ !cancelled() && env.CHECKS == 'true' }}
         working-directory: libs/cua-driver/rust
         run: cargo test --locked -p platform-linux --lib
