@@ -1,0 +1,28 @@
+name: ab-qt-census
+
+on:
+  push:
+    branches: [ab/qt-census]
+  workflow_dispatch:
+
+jobs:
+  census:
+    runs-on: macos-15-intel
+    timeout-minutes: 90
+    steps:
+      - name: Install Qt-looking apps
+        run: |
+          for cask in anki qgis musescore obs wireshark-app calibre telegram-desktop krita qt-creator keepassxc qbittorrent \
+            db-browser-for-sqlite shotcut kdenlive mixxx openscad ultimaker-cura zoom freecad; do
+            HOMEBREW_NO_AUTO_UPDATE=1 brew install --cask --no-progress "$cask" >/dev/null 2>&1 && echo "ok $cask" || echo "FAILED $cask"
+          done
+      - name: Qt version each app ships
+        run: |
+          { echo "| app | Qt |"; echo "|---|---|"; } >> "$GITHUB_STEP_SUMMARY"
+          for app in /Applications/*.app; do
+            lib=$(find "$app" -type f \( -path '*QtCore.framework/Versions/*/QtCore' -o -name 'libQt*Core*.dylib' \) 2>/dev/null | head -1)
+            [ -n "$lib" ] || continue
+            ver=$(otool -L "$lib" | sed -n '2p' | grep -oE 'current version [0-9.]+' | awk '{print $3}')
+            echo "| $(basename "$app" .app) | $ver |" | tee -a "$GITHUB_STEP_SUMMARY"
+          done
+
