@@ -1,20 +1,15 @@
 name: "ab: escape tree row text"
 
 on:
-  workflow_dispatch:
-    inputs:
-      sha:
-        description: "Full commit SHA of the fork to test"
-        required: true
-      checks:
-        description: "Also run fmt and clippy"
-        required: false
-        default: "true"
+  push:
+    branches: [ab/escape-tree-row-text]
 
 permissions:
   contents: read
 
 env:
+  TARGET_SHA: 5731d8b31cba737a57d3ccfde583b4eb9d66af87
+  CHECKS: "false"
   CARGO_NET_RETRY: "10"
   CUA_TELEMETRY: "0"
   DO_NOT_TRACK: "1"
@@ -28,7 +23,7 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          ref: ${{ inputs.sha }}
+          ref: ${{ env.TARGET_SHA }}
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: ab/escape-tree-row-text
@@ -58,7 +53,7 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          ref: ${{ inputs.sha }}
+          ref: ${{ env.TARGET_SHA }}
       - uses: ./.github/actions/linux-rust-prep
         with:
           install-deps: "false"
@@ -75,11 +70,11 @@ jobs:
             libei-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev libxext-dev
             xvfb xauth at-spi2-core
       - name: fmt
-        if: inputs.checks == 'true'
+        if: env.CHECKS == 'true'
         working-directory: libs/cua-driver/rust
         run: cargo fmt --all --check
       - name: clippy
-        if: inputs.checks == 'true'
+        if: env.CHECKS == 'true'
         working-directory: libs/cua-driver/rust
         run: cargo clippy --locked -p cua-driver-core -p platform-linux --all-targets -- -D warnings
       - name: test cua-driver-core
@@ -96,7 +91,7 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          ref: ${{ inputs.sha }}
+          ref: ${{ env.TARGET_SHA }}
       - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
         with:
           components: clippy
@@ -104,7 +99,7 @@ jobs:
         with:
           workspaces: "libs/cua-driver/rust -> target"
       - name: clippy
-        if: inputs.checks == 'true'
+        if: env.CHECKS == 'true'
         working-directory: libs/cua-driver/rust
         run: cargo clippy --locked -p platform-macos --all-targets -- -D warnings
       - name: test platform-macos
@@ -118,7 +113,7 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
-          ref: ${{ inputs.sha }}
+          ref: ${{ env.TARGET_SHA }}
       - uses: dtolnay/rust-toolchain@4716b85f2fac3e324e64fa2810f6b5c3905760a5 # 1.97.1
         with:
           components: clippy
@@ -126,7 +121,7 @@ jobs:
         with:
           workspaces: "libs/cua-driver/rust -> target"
       - name: clippy
-        if: inputs.checks == 'true'
+        if: env.CHECKS == 'true'
         working-directory: libs/cua-driver/rust
         run: cargo clippy --locked -p platform-windows --all-targets -- -D warnings
       - name: test platform-windows
