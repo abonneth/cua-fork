@@ -2,13 +2,18 @@ import socket
 import sys
 import time
 
-path, count, hold = sys.argv[1], int(sys.argv[2]), float(sys.argv[3])
+target, count, hold = sys.argv[1], int(sys.argv[2]), float(sys.argv[3])
 held, failed = [], 0
 for _ in range(count):
-    s = socket.socket(socket.AF_UNIX)
+    if target.startswith("tcp:"):
+        s = socket.socket(socket.AF_INET)
+        address = ("127.0.0.1", int(target[4:]))
+    else:
+        s = socket.socket(socket.AF_UNIX)
+        address = target
     s.settimeout(2)
     try:
-        s.connect(path)
+        s.connect(address)
         held.append(s)
     except OSError:
         failed += 1
