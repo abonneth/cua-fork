@@ -24,8 +24,8 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - label: main+test
-            sha: c84894aac9b1a85f918d11fadc55f3529a658734
+          - label: main
+            sha: ace7dac9cc94b02fc93dc9f588b7f04079339931
           - label: fix
             sha: 663fd792ff072283b460e6d21918967517fe86ca
     timeout-minutes: 90
@@ -83,11 +83,7 @@ jobs:
           $env:CUA_E2E_FORBID_SKIPS = "1"
           $env:CUA_E2E_UNRESTRICTED_GUI = "1"
           Set-Location $rustRoot
-          cargo test --locked -p cua-driver-e2e --test harness_wpf_test -- --ignored --exact `
-            harness_wpf_type_text_refuses_to_replace_an_unreadable_value `
-            harness_wpf_deferred_type_text_requires_fresh_snapshot_before_retry `
-            harness_wpf_set_value `
-            --nocapture --test-threads=1
+          cargo test --locked -p cua-driver-e2e --test harness_wpf_test -- --ignored --nocapture --test-threads=1
           exit $LASTEXITCODE
       - name: Upload artifacts
         if: always()
@@ -99,6 +95,7 @@ jobs:
           retention-days: 7
 
   checks:
+    if: "!contains(github.event.head_commit.message, '[full]')"
     name: "fmt + clippy + unit @ fix"
     runs-on: windows-2025
     timeout-minutes: 90
@@ -124,6 +121,7 @@ jobs:
         run: cargo test --locked -p platform-windows --lib
 
   fmt:
+    if: "!contains(github.event.head_commit.message, '[full]')"
     name: "fmt @ fix"
     runs-on: ubuntu-latest
     timeout-minutes: 15
