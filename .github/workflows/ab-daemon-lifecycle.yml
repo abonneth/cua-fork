@@ -126,7 +126,7 @@ jobs:
         if: always() && env.CHECKS == 'true'
         continue-on-error: true
         working-directory: libs/cua-driver/rust
-        run: cargo test --locked -p cua-driver --bin cua-driver serve:: -- --skip the_system_consent_labels_include_allow_and_dont_allow
+        run: "cargo test --locked -p cua-driver --bin cua-driver serve::"
 
   windows:
     if: true
