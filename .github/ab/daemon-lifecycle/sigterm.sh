@@ -14,7 +14,15 @@ pid=$!
 if ! wait_ready "$BIN" "$sock" "$pid"; then
   echo "daemon never became ready"; cat "$dir/serve.log"; exit 2
 fi
-"$BIN" call start_recording "{\"output_dir\":\"$rec\",\"record_video\":true}" --socket "$sock" | head -c 400; echo
+# An anonymous recording, like `cua-driver recording start`, but with video.
+python3 - "$sock" "$rec" <<'EOF'
+import json, socket, sys
+s = socket.socket(socket.AF_UNIX)
+s.connect(sys.argv[1])
+request = {"method": "call", "name": "start_recording", "args": {"output_dir": sys.argv[2], "record_video": True}}
+s.sendall((json.dumps(request) + "\n").encode())
+print("start_recording:", s.makefile().readline()[:300])
+EOF
 sleep 3
 echo "before SIGTERM: ffmpeg recorders: $(pgrep -fc "ffmpeg.*$rec" || true); socket file: $([ -S "$sock" ] && echo present); pid file: $(cat "$pidf" 2>/dev/null)"
 
