@@ -121,12 +121,11 @@ def main(driver):
               f"A got {a_lines}, B got {b_lines}")
 
         background_b = dict(target_b, delivery_mode="background")
-        typed_bg = call("type_text", dict(background_b, text="bg-B"))
-        pressed_bg = call("press_key", dict(background_b, key="Return"))
+        typed_bg = call("type_text", dict(background_b, text="bg-B\n"))
         time.sleep(2)
         a_after = [r["text"] for r in events("A")]
         check("two-window background: input for B never lands in A", a_after == a_lines,
-              f"A got {a_after}, type_text code={typed_bg.get('code')}, press_key code={pressed_bg.get('code')}")
+              f"A got {a_after}, type_text code={typed_bg.get('code')}")
 
         # Single-window terminal keeps the pty route.
         spawn(["xterm", "-T", "PTY-C", "-e", sys.executable, me, "--reader", "C", str(out), "child"])
